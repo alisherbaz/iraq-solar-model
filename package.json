@@ -1,0 +1,22 @@
+{
+  "name": "iraq-solar-model",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive solar PV, battery and financing model for a factory rooftop in Baghdad, Iraq.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:smoke": "playwright test --grep @smoke"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "chart.js": "^4.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

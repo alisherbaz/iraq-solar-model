@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iraq Solar Factory — Advanced Irradiation Model</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --bg:#ffffff; --bg2:#f6f4ef; --bg3:#ece9e1; --bg4:#e2ddd2;
+  --text:#1c1a14; --text2:#6b6558; --text3:#9a9282;
+  --border:rgba(0,0,0,0.09); --border2:rgba(0,0,0,0.15);
+  --sun:#d48a00; --sun2:#f5c842; --sun3:#fff3c4;
+  --green:#2a7d4f; --green2:#4caf73; --green3:#d4edd9;
+  --blue:#1a5ca8; --blue2:#3b89e0; --blue3:#d4e8fb;
+  --red:#b83030; --red2:#e05050; --red3:#fde0e0;
+  --radius:10px; --radius-sm:6px; --radius-xs:4px;
+  --shadow:0 1px 4px rgba(0,0,0,0.07);
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1810; --bg2:#222018; --bg3:#2a2820; --bg4:#323028;
+    --text:#f0ece0; --text2:#a09880; --text3:#706858;
+    --border:rgba(255,255,255,0.09); --border2:rgba(255,255,255,0.18);
+    --sun3:#3a2e00; --green3:#0d2a17; --blue3:#0d2040; --red3:#2a0d0d;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{font-size:13px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:var(--blue2);text-decoration:none}
+
+/* ── Layout ── */
+.app{max-width:1200px;margin:0 auto;padding:16px}
+.topbar{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap}
+.topbar h1{font-size:17px;font-weight:600;line-height:1.3}
+.topbar h1 small{display:block;font-size:11px;font-weight:400;color:var(--text2);margin-top:2px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;padding:3px 9px;border-radius:99px}
+.badge.sun{background:var(--sun3);color:var(--sun)}
+.badge.grn{background:var(--green3);color:var(--green)}
+
+.tabs{display:flex;gap:2px;background:var(--bg3);border-radius:var(--radius-sm);padding:3px;margin-bottom:14px;width:fit-content}
+.tab{font-size:11px;font-weight:500;padding:5px 14px;border-radius:var(--radius-xs);cursor:pointer;color:var(--text2);background:transparent;border:none;transition:all .15s}
+.tab.active{background:var(--bg);color:var(--text);box-shadow:var(--shadow)}
+
+.cols{display:grid;grid-template-columns:268px 1fr;gap:12px}
+@media(max-width:720px){.cols{grid-template-columns:1fr}}
+
+/* ── Controls ── */
+.ctrl{background:var(--bg2);border-radius:var(--radius);padding:14px 13px;position:sticky;top:8px;max-height:calc(100vh - 30px);overflow-y:auto}
+.sect{font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 9px;padding-top:10px;border-top:1px solid var(--border)}
+.sect:first-child{margin-top:0;padding-top:0;border-top:none}
+.fld{margin-bottom:9px}
+.fl{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px}
+.fl label{font-size:11px;color:var(--text2)}
+.fv{font-size:11px;font-weight:600;color:var(--text)}
+input[type=range]{width:100%;accent-color:var(--sun);cursor:pointer;height:18px}
+select,input[type=number]{width:100%;font-size:11px;background:var(--bg3);color:var(--text);border:1px solid var(--border2);border-radius:var(--radius-xs);padding:5px 7px;cursor:pointer}
+input[type=number]{cursor:text}
+
+/* ── Metric grid ── */
+.mg{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-bottom:10px}
+@media(max-width:900px){.mg{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:500px){.mg{grid-template-columns:repeat(2,1fr)}}
+.mc{background:var(--bg2);border-radius:var(--radius-sm);padding:9px 11px;border:1px solid var(--border)}
+.mc.hi{background:var(--sun3);border-color:rgba(212,138,0,0.2)}
+.mc.gr{background:var(--green3);border-color:rgba(42,125,79,0.2)}
+.mc.bl{background:var(--blue3);border-color:rgba(26,92,168,0.2)}
+.mc.rd{background:var(--red3);border-color:rgba(184,48,48,0.2)}
+.ml{font-size:9px;color:var(--text3);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mv{font-size:16px;font-weight:600;line-height:1.1;color:var(--text)}
+.mc.hi .mv{color:var(--sun)}
+.mc.gr .mv{color:var(--green)}
+.mc.bl .mv{color:var(--blue)}
+.mc.rd .mv{color:var(--red)}
+.mu{font-size:9px;color:var(--text2);font-weight:400}
+
+/* ── Cards & charts ── */
+.card{background:var(--bg2);border-radius:var(--radius);padding:11px 13px;margin-bottom:10px;border:1px solid var(--border)}
+.card-title{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.card-title span{font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;font-size:11px}
+.ch{position:relative;width:100%}
+.ch-h160{height:160px}
+.ch-h200{height:200px}
+.ch-h140{height:140px}
+
+/* ── Battery ── */
+.batt-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+@media(max-width:600px){.batt-row{grid-template-columns:1fr 1fr}}
+.batt-stat{background:var(--bg3);border-radius:var(--radius-xs);padding:8px 10px;text-align:center}
+.batt-stat .v{font-size:18px;font-weight:600}
+.batt-stat .l{font-size:9px;color:var(--text3);margin-top:1px}
+.batt-vis{width:100%;height:28px;background:var(--bg4);border-radius:var(--radius-xs);overflow:hidden;display:flex;margin-bottom:10px}
+.batt-self{background:var(--green2);transition:width .3s}
+.batt-exp{background:var(--blue2);transition:width .3s}
+.batt-leg{display:flex;gap:14px;font-size:10px;color:var(--text2);margin-bottom:10px}
+.batt-leg span{display:flex;align-items:center;gap:4px}
+.dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+
+/* ── Optimisation ── */
+.opt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:600px){.opt-grid{grid-template-columns:1fr}}
+
+/* ── Grants ── */
+.grant-item{display:flex;justify-content:space-between;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border);gap:12px}
+.grant-item:last-child{border-bottom:none}
+.grant-name{font-size:11px;font-weight:500}
+.grant-desc{font-size:10px;color:var(--text2);margin-top:1px}
+.grant-val{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
+.grant-total{background:var(--green3);border-radius:var(--radius-xs);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+.grant-total .l{font-size:11px;font-weight:600;color:var(--green)}
+.grant-total .v{font-size:18px;font-weight:700;color:var(--green)}
+
+.payback-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.pb-box{border-radius:var(--radius-xs);padding:9px 12px;text-align:center}
+.pb-box .v{font-size:22px;font-weight:700}
+.pb-box .l{font-size:9px;color:var(--text3);margin-top:2px}
+.pb-box.before{background:var(--red3)}
+.pb-box.before .v{color:var(--red)}
+.pb-box.after{background:var(--green3)}
+.pb-box.after .v{color:var(--green)}
+
+/* ── Roof SVG ── */
+#rsvg{display:block;width:100%}
+
+/* ── Panel ── */
+.panel{display:none}
+.panel.active{display:block}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div>
+      <h1>☀️ Iraq Advanced Solar Model
+        <small>Location: Baghdad, Iraq · Lat 33.3°N · PVGIS-calibrated · All values in USD</small>
+      </h1>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <span class="badge sun">☀ High Solar Resource</span>
+      <span class="badge grn" id="annualbadge">Annual: — MWh</span>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('generation')">⚡ Generation</button>
+    <button class="tab" onclick="switchTab('battery')">🔋 Battery Storage</button>
+    <button class="tab" onclick="switchTab('optimisation')">📊 CO₂ &amp; Cost Optimisation</button>
+    <button class="tab" onclick="switchTab('grants')">💰 Grants &amp; Financing</button>
+  </div>
+
+  <div class="cols">
+
+    <!-- ══ CONTROLS ══ -->
+    <div class="ctrl">
+
+      <div class="sect">Solar parameters</div>
+      <div class="fld">
+        <div class="fl"><label>Day of year</label><span class="fv" id="vd">172 · 20 Jun</span></div>
+        <input type="range" id="idoy" min="1" max="365" value="172" step="1">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Weather condition</label></div>
+        <select id="iwx">
+          <option value="clear">Clear sky (typical Iraq)</option>
+          <option value="partly" selected>Partly cloudy</option>
+          <option value="dusty">Dust haze / sandstorm</option>
+          <option value="overcast">Overcast</option>
+          <option value="monthly">Monthly average (Baghdad)</option>
+        </select>
+      </div>
+
+      <div class="sect">Roof &amp; panels</div>
+      <div class="fld">
+        <div class="fl"><label>Roof pitch</label><span class="fv" id="vp">15°</span></div>
+        <input type="range" id="ipitch" min="0" max="45" value="15" step="1">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Panel efficiency</label><span class="fv" id="ve">20.0%</span></div>
+        <input type="range" id="ieff" min="15" max="23" value="20" step="0.5">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Total roof area</label><span class="fv" id="va">5,000 m²</span></div>
+        <input type="range" id="iarea" min="500" max="30000" value="5000" step="500">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Panel coverage</label><span class="fv" id="vc">70%</span></div>
+        <input type="range" id="icov" min="40" max="90" value="70" step="5">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Orientation (facing)</label></div>
+        <select id="iorient">
+          <option value="0">South (optimal)</option>
+          <option value="-22.5">South-southeast</option>
+          <option value="22.5">South-southwest</option>
+          <option value="-45">Southeast</option>
+          <option value="45">Southwest</option>
+          <option value="-90">East</option>
+          <option value="90">West</option>
+          <option value="180">North</option>
+        </select>
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Temperature derating</label><span class="fv" id="vtemp">Auto</span></div>
+        <input type="range" id="itemp" min="0" max="20" value="0" step="1"
+               title="Extra % loss from Iraq summer heat (0=auto-calculated)">
+      </div>
+
+      <div class="sect">Economics</div>
+      <div class="fld">
+        <div class="fl"><label>Electricity price</label><span class="fv" id="vpr">$0.10/kWh</span></div>
+        <input type="range" id="iprice" min="0.05" max="0.35" value="0.10" step="0.01">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Install cost</label><span class="fv" id="vinstall">$950/kWp</span></div>
+        <input type="range" id="iinstall" min="500" max="1800" value="950" step="50">
+      </div>
+
+      <div class="sect">Battery storage</div>
+      <div class="fld">
+        <div class="fl"><label>Battery capacity</label><span class="fv" id="vbatt">500 kWh</span></div>
+        <input type="range" id="ibatt" min="0" max="5000" value="500" step="100">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Round-trip efficiency</label><span class="fv" id="vbeff">90%</span></div>
+        <input type="range" id="ibeff" min="80" max="97" value="90" step="1">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Factory load (daytime)</label><span class="fv" id="vload">800 kW</span></div>
+        <input type="range" id="iload" min="50" max="5000" value="800" step="50">
+      </div>
+
+      <div class="sect">Grants</div>
+      <div class="fld">
+        <div class="fl"><label>Custom grant / subsidy</label><span class="fv" id="vgrant">0%</span></div>
+        <input type="range" id="igrant" min="0" max="60" value="0" step="5">
+      </div>
+      <div class="fld">
+        <div class="fl"><label>Soft loan rate</label><span class="fv" id="vloan">5%</span></div>
+        <input type="range" id="iloan" min="0" max="15" value="5" step="0.5">
+      </div>
+    </div>
+
+    <!-- ══ MAIN OUTPUT ══ -->
+    <div id="mainout">
+
+      <!-- Shared metric grid (always visible) -->
+      <div class="mg">
+        <div class="mc hi"><div class="ml">Daily output</div><div class="mv"><span id="m1">—</span><span class="mu"> kWh</span></div></div>
+        <div class="mc hi"><div class="ml">Peak power</div><div class="mv"><span id="m2">—</span><span class="mu"> kW</span></div></div>
+        <div class="mc"><div class="ml">System capacity</div><div class="mv"><span id="m3">—</span><span class="mu"> kWp</span></div></div>
+        <div class="mc gr"><div class="ml">Annual output</div><div class="mv"><span id="m4">—</span><span class="mu"> MWh/yr</span></div></div>
+        <div class="mc gr"><div class="ml">Annual savings</div><div class="mv">$<span id="m5">—</span></div></div>
+        <div class="mc bl"><div class="ml">CO₂ offset</div><div class="mv"><span id="m6">—</span><span class="mu"> t/yr</span></div></div>
+        <div class="mc bl"><div class="ml">Panel count</div><div class="mv"><span id="m7">—</span></div></div>
+        <div class="mc"><div class="ml">Self-consumption</div><div class="mv"><span id="m9">—</span><span class="mu">%</span></div></div>
+        <div class="mc"><div class="ml">Grid export</div><div class="mv"><span id="m10">—</span><span class="mu"> MWh/yr</span></div></div>
+        <div class="mc rd"><div class="ml">Payback (net grants)</div><div class="mv"><span id="m8">—</span><span class="mu"> yrs</span></div></div>
+      </div>
+
+      <!-- ── TAB: GENERATION ── -->
+      <div id="tab-generation" class="panel active">
+
+        <div class="card">
+          <div class="card-title">Hourly generation — <span id="dlbl">—</span></div>
+          <div class="ch ch-h160"><canvas id="c1"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Monthly generation — full year at current settings <span id="ytot"></span></div>
+          <div class="ch ch-h200"><canvas id="c2"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Annual heat map — daily output kWh across the year <span style="font-size:10px;color:var(--text3)">(darker = more generation)</span></div>
+          <div id="heatmap" style="display:grid;grid-template-columns:repeat(52,1fr);gap:1.5px;padding:4px 0"></div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:7px;font-size:9px;color:var(--text3)">
+            <span>Less</span>
+            <div style="display:flex;gap:2px">
+              <div style="width:10px;height:10px;background:#ece9e1;border-radius:2px"></div>
+              <div style="width:10px;height:10px;background:#f5c842;border-radius:2px"></div>
+              <div style="width:10px;height:10px;background:#e8a020;border-radius:2px"></div>
+              <div style="width:10px;height:10px;background:#c97010;border-radius:2px"></div>
+              <div style="width:10px;height:10px;background:#8b4500;border-radius:2px"></div>
+            </div>
+            <span>More</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Roof panel layout — top-down view <span id="roofstats"></span></div>
+          <svg id="rsvg" viewBox="0 0 560 170"></svg>
+        </div>
+
+      </div>
+
+      <!-- ── TAB: BATTERY ── -->
+      <div id="tab-battery" class="panel">
+
+        <div class="batt-row">
+          <div class="batt-stat"><div class="v" id="bv1" style="color:var(--green)">—</div><div class="l">Self-consumed kWh/day</div></div>
+          <div class="batt-stat"><div class="v" id="bv2" style="color:var(--blue)">—</div><div class="l">Grid export kWh/day</div></div>
+          <div class="batt-stat"><div class="v" id="bv3" style="color:var(--sun)">—</div><div class="l">Battery cycles/year</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Energy flow — self-consumption vs grid export vs grid import</div>
+          <div class="batt-leg">
+            <span><div class="dot" style="background:var(--green2)"></div>Self-consumed (direct)</span>
+            <span><div class="dot" style="background:var(--sun)"></div>Battery charged</span>
+            <span><div class="dot" style="background:var(--blue2)"></div>Grid export</span>
+            <span><div class="dot" style="background:var(--red2)"></div>Grid import (shortfall)</span>
+          </div>
+          <div class="ch ch-h200"><canvas id="cb1"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Monthly self-consumption rate % vs solar fraction</div>
+          <div class="ch ch-h160"><canvas id="cb2"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Battery state of charge — typical day <span id="battdate"></span></div>
+          <div class="ch ch-h160"><canvas id="cb3"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Battery economics</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
+            <div class="batt-stat"><div class="v" id="bve1" style="color:var(--green)">—</div><div class="l">Extra annual saving $</div></div>
+            <div class="batt-stat"><div class="v" id="bve2" style="color:var(--text)">—</div><div class="l">Battery install cost $</div></div>
+            <div class="batt-stat"><div class="v" id="bve3" style="color:var(--blue)">—</div><div class="l">Battery payback yrs</div></div>
+          </div>
+          <p style="font-size:10px;color:var(--text3)">Battery cost assumed at $350/kWh installed. Export credit assumed at $0.05/kWh (Iraq buyback tariff estimate). Self-consumed solar displaces grid purchases at full electricity price.</p>
+        </div>
+      </div>
+
+      <!-- ── TAB: OPTIMISATION ── -->
+      <div id="tab-optimisation" class="panel">
+
+        <div class="opt-grid">
+          <div class="card" style="margin-bottom:0">
+            <div class="card-title">CO₂ saved vs system size</div>
+            <div class="ch ch-h200"><canvas id="co1"></canvas></div>
+          </div>
+          <div class="card" style="margin-bottom:0">
+            <div class="card-title">Annual savings $ vs system size</div>
+            <div class="ch ch-h200"><canvas id="co2c"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:10px">
+          <div class="card-title">Coverage % vs payback period — sweet-spot finder</div>
+          <div class="ch ch-h160"><canvas id="co3"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Roof pitch optimisation — annual output vs tilt angle <span>South-facing at current settings</span></div>
+          <div class="ch ch-h140"><canvas id="co4"></canvas></div>
+          <p style="font-size:10px;color:var(--text3);margin-top:6px">Optimal tilt for Baghdad (~33°N) is approximately 30–33° for annual maximum. Summer peak shifts toward lower tilt. Current pitch shown as ↓ marker.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Orientation sensitivity — % of south-facing output by azimuth</div>
+          <div class="ch ch-h140"><canvas id="co5"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Heat temperature derating — Iraq summer impact</div>
+          <div class="ch ch-h140"><canvas id="co6"></canvas></div>
+          <p style="font-size:10px;color:var(--text3);margin-top:6px">Iraqi summers regularly exceed 45°C. Panels lose ~0.4%/°C above 25°C STC. At 55°C ambient, cell temp ~70°C → ~18% power loss. Bifacial panels and elevated mounting reduce this.</p>
+        </div>
+      </div>
+
+      <!-- ── TAB: GRANTS ── -->
+      <div id="tab-grants" class="panel">
+
+        <div class="card">
+          <div class="card-title">Iraq &amp; international financing programmes</div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">Iraq RE Law No. 42 (2023) — Import duty exemption</div>
+              <div class="grant-desc">Solar panels, inverters and mounting hardware fully exempt from import duties and VAT for licensed commercial projects. Apply via MoE renewable energy directorate.</div>
+            </div>
+            <div class="grant-val" id="g1val">—</div>
+          </div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">World Bank Iraq Financing Facility (IBRD)</div>
+              <div class="grant-desc">Concessional project financing at 3–5% for renewable energy. Up to 70% of capex eligible. Active IDA programme in Iraq 2024–2028. Requires MoE counter-guarantee.</div>
+            </div>
+            <div class="grant-val" id="g2val">—</div>
+          </div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">IFC / MIGA private sector guarantee</div>
+              <div class="grant-desc">IFC provides partial risk guarantees for private commercial solar. Reduces financing cost by 1–3% and unlocks international debt. Food sector qualifies under agri-value-chain program.</div>
+            </div>
+            <div class="grant-val" id="g3val">—</div>
+          </div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">UNDP GEF Iraq Energy Efficiency Grant</div>
+              <div class="grant-desc">Direct grants for energy-efficiency + renewable hybrid projects in industrial sector. Typical range $50k–$500k non-repayable. Rolling application cycle.</div>
+            </div>
+            <div class="grant-val">$50k–$500k</div>
+          </div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">EU-Iraq Neighbourhood Partnership Fund</div>
+              <div class="grant-desc">Co-financing grants for clean energy in food processing / agri-industrial sector. 15–25% co-finance. Active 2024–2026 cycle.</div>
+            </div>
+            <div class="grant-val" id="g4val">—</div>
+          </div>
+          <div class="grant-item">
+            <div>
+              <div class="grant-name">Custom grant / subsidy (set in controls)</div>
+              <div class="grant-desc">Use the slider to model any local government grant, utility rebate or custom subsidy percentage.</div>
+            </div>
+            <div class="grant-val" id="g5val">—</div>
+          </div>
+          <div class="grant-total">
+            <div class="l">Maximum blended support (all programmes)</div>
+            <div class="v" id="gtotal">—</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Payback comparison — without vs with financing support</div>
+          <div class="payback-row">
+            <div class="pb-box before">
+              <div class="v" id="pb_before">—</div>
+              <div class="l">Years — no grants, cash purchase</div>
+            </div>
+            <div class="pb-box after">
+              <div class="v" id="pb_after">—</div>
+              <div class="l">Years — with max grant support</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Levelised cost of energy (LCOE) analysis <span>25-year project life</span></div>
+          <div class="ch ch-h160"><canvas id="lcoe"></canvas></div>
+          <p style="font-size:10px;color:var(--text3);margin-top:6px">Iraq grid electricity costs $0.08–$0.12/kWh commercial (plus hidden cost of diesel backup ~$0.25–$0.35/kWh). Solar LCOE in Iraq typically $0.025–$0.045/kWh — one of the lowest globally due to high irradiance.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Net Present Value over 25 years — sensitivity to electricity price</div>
+          <div class="ch ch-h160"><canvas id="npv"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Financing scenario summary</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div class="batt-stat"><div class="v" id="fs1" style="color:var(--text)">—</div><div class="l">Total install cost $</div></div>
+            <div class="batt-stat"><div class="v" id="fs2" style="color:var(--green)">—</div><div class="l">Grants / duty savings $</div></div>
+            <div class="batt-stat"><div class="v" id="fs3" style="color:var(--blue)">—</div><div class="l">Net cost after support $</div></div>
+            <div class="batt-stat"><div class="v" id="fs4" style="color:var(--sun)">—</div><div class="l">Annual loan repayment $</div></div>
+            <div class="batt-stat"><div class="v" id="fs5" style="color:var(--green)">—</div><div class="l">Net annual cashflow $</div></div>
+            <div class="batt-stat"><div class="v" id="fs6" style="color:var(--blue)">—</div><div class="l">25-yr NPV $</div></div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ══ CONSTANTS — IRAQ ══════════════════════════════════════════════════════
+const LAT = 33.3 * Math.PI / 180;  // Baghdad
+const PR  = 0.80;
+const CO2F = 0.600;  // kg CO2/kWh Iraq grid (fossil-heavy)
+const PM2  = 1.75;   // m² per 400W panel
+const MDAYS= [31,28,31,30,31,30,31,31,30,31,30,31];
+const MN   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const BATTERY_COST_PER_KWH = 350; // $/kWh
+const EXPORT_TARIFF = 0.05; // $/kWh Iraq export credit estimate
+const DISC_RATE = 0.08; // discount rate for NPV
+
+// PVGIS-calibrated daily irradiation kWh/m²/day — Baghdad, south-facing ~30° tilt
+const PVGIS = [3.50,4.50,5.50,6.50,7.20,8.00,7.80,7.40,6.50,5.20,3.80,3.10];
+// Monthly ambient temps °C (Baghdad averages)
+const TAMB  = [9.4,11.8,16.0,22.5,28.5,33.5,35.5,35.0,31.0,24.5,16.0,10.5];
+// Clearness index Iraq
+const KT    = [0.55,0.58,0.60,0.62,0.65,0.70,0.68,0.67,0.65,0.60,0.55,0.52];
+// Duty exemption savings estimate % of hardware cost (panels+inverters ~60% of total)
+const DUTY_RATE = 0.15; // 15% import duty saved
+
+function midDoy(m){let d=0;for(let i=0;i<m;i++)d+=MDAYS[i];return d+Math.floor(MDAYS[m]/2)}
+function doyToMonth(d){let c=0;for(let i=0;i<12;i++){c+=MDAYS[i];if(d<=c)return i}return 11}
+function fmt(n,dec=0){return n==null?'—':Number(n).toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec})}
+function fmtDate(doy){const d=new Date(2024,0,doy);return d.toLocaleDateString('en-US',{day:'numeric',month:'short'})}
+function solarDecl(doy){return 23.45*Math.PI/180*Math.sin(2*Math.PI*(doy-81)/365)}
+function sinElev(doy,hour){const d=solarDecl(doy),h=(hour-12)*15*Math.PI/180;return Math.sin(LAT)*Math.sin(d)+Math.cos(LAT)*Math.cos(d)*Math.cos(h)}
+function solarAzDeg(doy,hour){const d=solarDecl(doy),h=(hour-12)*15*Math.PI/180,se=sinElev(doy,hour);if(se<=0)return 0;const ca=(Math.sin(d)-se*Math.sin(LAT))/(Math.cos(Math.asin(Math.max(-1,Math.min(1,se))))*Math.cos(LAT));let az=Math.acos(Math.max(-1,Math.min(1,ca)))*180/Math.PI;if(h>0)az=-az;return az}
+function IAM(pitch,orient,doy,hour){const p=pitch*Math.PI/180,o=orient*Math.PI/180,el=Math.asin(Math.max(0,sinElev(doy,hour))),az=solarAzDeg(doy,hour)*Math.PI/180;const ci=Math.cos(el)*Math.cos(az-o)*Math.sin(p)+Math.sin(el)*Math.cos(p);return Math.max(0,ci)}
+function clearSkyG(doy,hour){const se=sinElev(doy,hour);if(se<=0.01)return 0;const am=1/se,tau=0.56*(Math.exp(-0.065*am)+Math.exp(-0.095*am));return 1367*(1+0.033*Math.cos(2*Math.PI*doy/365))*se*tau}
+function sunRS(doy){const d=solarDecl(doy),c=-Math.tan(LAT)*Math.tan(d);if(c>=1)return{r:12,s:12};if(c<=-1)return{r:0,s:24};const H=Math.acos(c)*180/Math.PI/15;return{r:12-H,s:12+H}}
+
+// Temperature derating: ~0.4%/°C above 25°C, cell temp = ambient + 25°C under full sun
+function tempDerate(month, customExtra){
+  if(customExtra>0) return 1 - customExtra/100;
+  const tc = TAMB[month] + 25; // NOCT offset
+  const loss = Math.max(0, (tc - 25) * 0.004);
+  return Math.max(0.70, 1 - loss);
+}
+
+function hourIrr(doy,hour,pitch,orient,wx){
+  const m=doyToMonth(doy);
+  let g;
+  if(wx==='monthly'){
+    const {r,s}=sunRS(doy),dl=s-r;
+    if(hour<r||hour>s)return 0;
+    const x=(hour-r)/dl,bell=Math.sin(Math.PI*x);
+    g=PVGIS[m]*1000/dl*Math.PI/2*bell;
+  } else {
+    const cs=clearSkyG(doy,hour);
+    const kt=wx==='clear'?1.0:wx==='partly'?KT[m]/0.6:wx==='dusty'?0.45:0.25;
+    g=cs*Math.min(1,kt*1.1);
+  }
+  const flat=Math.max(0,sinElev(doy,hour));
+  if(flat<0.001)return 0;
+  const tf=IAM(pitch,orient,doy,hour)/flat;
+  return g*Math.max(0.05,Math.min(1.5,tf));
+}
+
+// ══ STATE ═════════════════════════════════════════════════════════════════
+const S={doy:172,wx:'partly',pitch:15,eff:20,area:5000,cov:70,orient:0,price:0.10,install:950,batt:500,beff:90,load:800,grant:0,loan:5,temp:0};
+
+// ══ CHARTS ════════════════════════════════════════════════════════════════
+const CHARTS={};
+function mkChart(id,cfg){if(CHARTS[id])CHARTS[id].destroy();CHARTS[id]=new Chart(document.getElementById(id).getContext('2d'),cfg);return CHARTS[id]}
+const baseOpts=(yl='')=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(128,128,128,0.1)'},ticks:{font:{size:9},color:'#888'}},y:{grid:{color:'rgba(128,128,128,0.1)'},ticks:{font:{size:9},color:'#888'},title:{display:!!yl,text:yl,font:{size:9},color:'#888'}}}})
+const baseOpts2=(yl='',showLegend=false)=>({...baseOpts(yl),plugins:{legend:{display:showLegend,labels:{font:{size:9},boxWidth:10,padding:8}}}})
+
+function initCharts(){
+  mkChart('c1',{type:'bar',data:{labels:[],datasets:[{label:'kWh',data:[],backgroundColor:'rgba(212,138,0,0.7)',borderColor:'rgba(212,138,0,1)',borderWidth:1,borderRadius:2}]},options:{...baseOpts('kWh'),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${c.parsed.y.toFixed(1)} kWh`}}}}});
+  mkChart('c2',{type:'bar',data:{labels:MN,datasets:[{label:'kWh',data:new Array(12).fill(0),backgroundColor:MN.map((_,i)=>{const v=i/11;return`rgba(${Math.round(212+43*v)},${Math.round(138+82*v)},${Math.round(0+32*v)},0.75)`}),borderRadius:2}]},options:{...baseOpts('kWh'),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` ${fmt(c.parsed.y)} kWh`}}}}});
+  mkChart('cb1',{type:'bar',data:{labels:[],datasets:[{label:'Self-consumed',data:[],backgroundColor:'rgba(76,175,115,0.8)',stack:'a'},{label:'Battery',data:[],backgroundColor:'rgba(212,138,0,0.7)',stack:'a'},{label:'Grid export',data:[],backgroundColor:'rgba(59,137,224,0.7)',stack:'a'},{label:'Grid import',data:[],backgroundColor:'rgba(224,80,80,0.5)',stack:'b'}]},options:{...baseOpts2('kWh',true),responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{font:{size:9},boxWidth:9}},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${Math.abs(c.parsed.y).toFixed(1)} kWh`}}},scales:{x:{stacked:true,grid:{color:'rgba(128,128,128,0.1)'},ticks:{font:{size:9},color:'#888'}},y:{stacked:true,grid:{color:'rgba(128,128,128,0.1)'},ticks:{font:{size:9},color:'#888'}}}}});
+  mkChart('cb2',{type:'line',data:{labels:MN,datasets:[{label:'Self-consumption %',data:[],borderColor:'#4caf73',backgroundColor:'rgba(76,175,115,0.1)',tension:0.4,fill:true,pointRadius:3},{label:'Solar fraction %',data:[],borderColor:'#d48a00',backgroundColor:'rgba(212,138,0,0.1)',tension:0.4,fill:false,pointRadius:3}]},options:{...baseOpts2('%',true),responsive:true,maintainAspectRatio:false,scales:{x:{grid:{color:'rgba(128,128,128,0.1)'},ticks:{font:{size:9},color:'#888'}},y:{grid:{color:'rgba(128,128,128,0.1)'},min:0,max:100,ticks:{font:{size:9},color:'#888',callback:v=>v+'%'}}}}});
+  mkChart('cb3',{type:'line',data:{labels:[],datasets:[{label:'Battery SoC kWh',data:[],borderColor:'#d48a00',backgroundColor:'rgba(212,138,0,0.15)',tension:0.4,fill:true,pointRadius:0}]},options:{...baseOpts('kWh'),plugins:{legend:{display:false}}}});
+  mkChart('co1',{type:'line',data:{labels:[],datasets:[{label:'CO₂ saved t/yr',data:[],borderColor:'#2a7d4f',backgroundColor:'rgba(42,125,79,0.1)',tension:0.4,fill:true,pointRadius:0}]},options:{...baseOpts('t CO₂/yr')}});
+  mkChart('co2c',{type:'line',data:{labels:[],datasets:[{label:'Annual savings $',data:[],borderColor:'#d48a00',backgroundColor:'rgba(212,138,0,0.1)',tension:0.4,fill:true,pointRadius:0}]},options:{...baseOpts('$ / yr')}});
+  mkChart('co3',{type:'line',data:{labels:[],datasets:[{label:'Payback yrs',data:[],borderColor:'#1a5ca8',backgroundColor:'rgba(26,92,168,0.1)',tension:0.4,fill:false,pointRadius:3,pointBackgroundColor:'#1a5ca8'},{label:'Optimal zone',data:[],borderColor:'rgba(76,175,115,0.5)',backgroundColor:'rgba(76,175,115,0.12)',tension:0.4,fill:true,pointRadius:0,borderDash:[4,3]}]},options:{...baseOpts2('Years',true)}});
+  mkChart('co4',{type:'line',data:{labels:[],datasets:[{label:'Annual MWh',data:[],borderColor:'#d48a00',backgroundColor:'rgba(212,138,0,0.15)',tension:0.4,fill:true,pointRadius:0}]},options:{...baseOpts('MWh/yr')}});
+  mkChart('co5',{type:'radar',data:{labels:['S','SSE','SE','E','NE','N','NW','W','SW','SSW'],datasets:[{label:'% of S-facing output',data:[],backgroundColor:'rgba(212,138,0,0.2)',borderColor:'#d48a00',pointBackgroundColor:'#d48a00',pointRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{r:{min:0,max:100,ticks:{font:{size:8},color:'#888',stepSize:20},grid:{color:'rgba(128,128,128,0.15)'}}}}});
+  mkChart('co6',{type:'line',data:{labels:[],datasets:[{label:'Output kWh (actual vs STC)',data:[],borderColor:'#b83030',backgroundColor:'rgba(184,48,48,0.12)',tension:0.4,fill:true,pointRadius:0},{label:'Without derating',data:[],borderColor:'rgba(212,138,0,0.4)',borderDash:[5,4],tension:0.4,fill:false,pointRadius:0}]},options:{...baseOpts2('MWh/yr',true),responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{font:{size:9},boxWidth:9}}}}});
+  mkChart('lcoe',{type:'bar',data:{labels:['Solar (this system)','Solar + battery','Iraq grid (commercial)','Iraq diesel backup','Solar w/ grants'],datasets:[{data:[0,0,0,0,0],backgroundColor:['#4caf73','#2a7d4f','#b83030','#8b0000','#1a5ca8'],borderRadius:3}]},options:{...baseOpts('$/kWh'),indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>` $${c.parsed.x.toFixed(3)}/kWh`}}}}});
+  mkChart('npv',{type:'line',data:{labels:[],datasets:[{label:'Low price ($0.07)',data:[],borderColor:'#b83030',tension:0.4,pointRadius:0,fill:false},{label:'Mid price (current)',data:[],borderColor:'#d48a00',tension:0.4,pointRadius:0,fill:false},{label:'High price ($0.20)',data:[],borderColor:'#2a7d4f',tension:0.4,pointRadius:0,fill:false}]},options:{...baseOpts2('NPV $',true),responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{font:{size:9},boxWidth:9}},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: $${fmt(c.parsed.y)}`}}}}});
+}
+
+// ══ COMPUTE ════════════════════════════════════════════════════════════════
+function compute(){
+  const {doy,wx,pitch,eff,area,cov,orient,price,install,batt,beff,load,grant,loan,temp}=S;
+  const eff_f=eff/100, panelArea=area*(cov/100), kWp=panelArea*eff_f, month=doyToMonth(doy);
+
+  // Hourly for selected day
+  const hours=[],hourlyKwh=[];
+  for(let h=4;h<=21;h++){
+    const irr=hourIrr(doy,h+0.5,pitch,orient,wx);
+    const td=tempDerate(month,temp);
+    const kwh=irr*panelArea*eff_f*PR*td/1000;
+    hours.push(`${String(h).padStart(2,'0')}:00`);
+    hourlyKwh.push(Math.max(0,kwh));
+  }
+  const dailyKwh=hourlyKwh.reduce((a,b)=>a+b,0);
+  const peakKw=Math.max(...hourlyKwh);
+
+  // Monthly using PVGIS
+  const wxF={clear:1.10,partly:0.82,dusty:0.55,overcast:0.35,monthly:1.0};
+  const monthlyKwh=MDAYS.map((days,mi)=>{
+    const md=midDoy(mi),wxf=wxF[wx]||1;
+    let tiltF=0,flatF=0;
+    for(let h=5;h<=20;h++){const se=Math.max(0,sinElev(md,h+0.5));flatF+=se;tiltF+=IAM(pitch,orient,md,h+0.5)}
+    const oFactor=flatF>0?Math.min(1.15,tiltF/flatF):1;
+    const td=tempDerate(mi,temp);
+    return PVGIS[mi]*panelArea*eff_f*PR*wxf*oFactor*td*days;
+  });
+  const annualKwh=monthlyKwh.reduce((a,b)=>a+b,0);
+
+  // Battery simulation (daily)
+  const loadKwPerHour=load; // kW constant daytime load 7–18
+  const battCap=batt, bRTE=beff/100;
+  let selfConsumed=0,battCharged=0,exported=0,shortfall=0;
+  const hourSelf=[],hourBatt=[],hourExp=[],hourImp=[],hourSoC=[];
+  let soC=batt*0.3;
+  for(let h=4;h<=23;h++){
+    const gen=hourlyKwh[Math.max(0,h-4)]||0;
+    const demand=loadKwPerHour*(h>=7&&h<=18?1:0.15); // lower at night
+    let net=gen-demand;
+    let selfH=0,battH=0,expH=0,impH=0;
+    if(net>=0){
+      selfH=demand;
+      const spare=net;
+      const canCharge=Math.min(spare,battCap-soC);
+      battH=canCharge*bRTE; soC=Math.min(battCap,soC+canCharge);
+      expH=spare-canCharge;
+    } else {
+      selfH=gen;
+      const need=-net;
+      const fromBatt=Math.min(need,soC*bRTE);
+      battH=-fromBatt/bRTE; soC=Math.max(0,soC-fromBatt/bRTE);
+      impH=Math.max(0,need-fromBatt);
+    }
+    hourSelf.push(selfH); hourBatt.push(battH); hourExp.push(expH); hourImp.push(impH); hourSoC.push(soC);
+    selfConsumed+=selfH; battCharged+=Math.max(0,battH); exported+=expH; shortfall+=impH;
+  }
+  const selfConsRate=dailyKwh>0?Math.min(100,(selfConsumed/dailyKwh)*100):0;
+
+  const annualSavings=annualKwh*(cov/100)*selfConsRate/100*price + annualKwh*(1-selfConsRate/100)*EXPORT_TARIFF;
+  const annualSavingsSimple=annualKwh*price*PR; // simplified for display
+  const co2t=annualKwh*CO2F/1000;
+  const panelCount=Math.floor(panelArea/PM2);
+
+  // Monthly battery self-consumption
+  const monthlySCR=[],monthlySF=[];
+  const dailyLoad=load*(11+0.15*13)*3600/1000; // rough daily kWh load
+  MDAYS.forEach((days,mi)=>{
+    const sol=PVGIS[mi]*panelArea*eff_f*PR*(tempDerate(mi,temp));
+    const selfPct=Math.min(100,(Math.min(sol,dailyLoad)+(batt*0.7))/Math.max(1,dailyLoad)*100);
+    const sfPct=Math.min(100,(sol/Math.max(1,dailyLoad))*100);
+    monthlySCR.push(+selfPct.toFixed(1)); monthlySF.push(+sfPct.toFixed(1));
+  });
+
+  // Economics
+  const installCost=kWp*install;
+  const dutyS=installCost*0.6*DUTY_RATE; // 60% hardware, 15% duty
+  const wbGrant=Math.min(installCost*0.35,500000); // WB up to 35% / $500k cap
+  const euGrant=Math.min(installCost*0.20,300000);
+  const customGrant=installCost*grant/100;
+  const totalGrants=dutyS+wbGrant+euGrant+customGrant;
+  const netCost=Math.max(0,installCost-totalGrants);
+  const pbBefore=annualSavingsSimple>0?installCost/annualSavingsSimple:99;
+  const pbAfter =annualSavingsSimple>0?netCost/annualSavingsSimple:99;
+  const payback=pbAfter;
+
+  // Loan repayment (annuity)
+  const lR=loan/100,lYrs=20,lAmt=netCost;
+  const annuity=lR>0?lAmt*lR/(1-Math.pow(1+lR,-lYrs)):lAmt/lYrs;
+
+  // LCOE 25yr
+  const lcoe_solar=installCost/(annualKwh*25);
+  const lcoe_batt=(installCost+batt*BATTERY_COST_PER_KWH)/(annualKwh*25);
+  const lcoe_grid=price;
+  const lcoe_diesel=0.28;
+  const lcoe_grant=netCost/(annualKwh*25);
+
+  // NPV curves
+  const buildNPV=(p)=>{const yrs=Array.from({length:26},(_,i)=>i);return yrs.map(yr=>{let npv=-netCost;for(let y=1;y<=yr;y++)npv+=annualKwh*p/Math.pow(1+DISC_RATE,y);return Math.round(npv)})};
+  const npvLow=buildNPV(0.07),npvMid=buildNPV(price),npvHigh=buildNPV(0.20);
+  const npv25=npvMid[25];
+
+  // Optimisation curves
+  const covArr=Array.from({length:11},(_,i)=>40+i*5);
+  const co2Arr=covArr.map(cv=>annualKwh*(cv/S.cov)*CO2F/1000);
+  const savArr=covArr.map(cv=>annualKwh*(cv/S.cov)*price);
+  const pbArr =covArr.map(cv=>{const k=panelArea*(cv/cov)*eff_f,ic=k*install,sav=annualKwh*(cv/S.cov)*price;return sav>0?+(ic/sav).toFixed(1):99});
+
+  const pitches=Array.from({length:19},(_,i)=>i*2.5);
+  const pitchOut=pitches.map(p=>{
+    let s=0;
+    MDAYS.forEach((days,mi)=>{
+      const md=midDoy(mi);let tf=0,ff=0;
+      for(let h=5;h<=20;h++){ff+=Math.max(0,sinElev(md,h+0.5));tf+=IAM(p,0,md,h+0.5)}
+      s+=PVGIS[mi]*panelArea*eff_f*PR*(tf>0?tf/ff:1)*tempDerate(mi,temp)*days;
+    });
+    return Math.round(s/1000);
+  });
+
+  const orients2=[0,-22.5,-45,-90,45,90,135,180,-135,22.5];
+  const orientOut=orients2.map(o=>{
+    let s=0;MDAYS.forEach((days,mi)=>{const md=midDoy(mi);let tf=0,ff=0;for(let h=5;h<=20;h++){ff+=Math.max(0,sinElev(md,h+0.5));tf+=IAM(pitch,o,md,h+0.5)}s+=PVGIS[mi]*panelArea*eff_f*PR*(tf>0?tf/ff:1)*tempDerate(mi,temp)*days});return s;
+  });
+  const maxO=Math.max(...orientOut);
+  const oLabels=['S','SSE','SE','E','SW','W','SSW','N','NNW','SSW'];
+  const orientPct=orientOut.map(v=>Math.round(v/maxO*100));
+
+  // Temp sensitivity
+  const months12=MN;
+  const deratedOut=MDAYS.map((days,mi)=>{
+    const md=midDoy(mi);let tf=0,ff=0;
+    for(let h=5;h<=20;h++){ff+=Math.max(0,sinElev(md,h+0.5));tf+=IAM(pitch,orient,md,h+0.5)}
+    return PVGIS[mi]*panelArea*eff_f*PR*(tf>0?Math.min(1.15,tf/ff):1)*tempDerate(mi,temp)*days/1000;
+  });
+  const underated=MDAYS.map((days,mi)=>{
+    const md=midDoy(mi);let tf=0,ff=0;
+    for(let h=5;h<=20;h++){ff+=Math.max(0,sinElev(md,h+0.5));tf+=IAM(pitch,orient,md,h+0.5)}
+    return PVGIS[mi]*panelArea*eff_f*PR*(tf>0?Math.min(1.15,tf/ff):1)*days/1000;
+  });
+
+  return {
+    hours,hourlyKwh,dailyKwh,peakKw,kWp,monthlyKwh,annualKwh,annualSavings:annualSavingsSimple,
+    co2t,panelCount,payback,selfConsRate,exportMWhYr:annualKwh*(1-selfConsRate/100),
+    hourSelf,hourBatt,hourExp,hourImp,hourSoC,monthlySCR,monthlySF,selfConsumed,exported,shortfall,
+    battCycles:Math.round(battCharged*365/Math.max(1,batt)),
+    battExtraSaving:(selfConsumed*365-annualKwh*0.7)*Math.max(0,price-EXPORT_TARIFF),
+    battInstallCost:batt*BATTERY_COST_PER_KWH,
+    installCost,dutyS,wbGrant,euGrant,customGrant,totalGrants,netCost,pbBefore,pbAfter,
+    annuity,lcoe_solar,lcoe_batt,lcoe_grid,lcoe_diesel,lcoe_grant,npvLow,npvMid,npvHigh,npv25,
+    covArr,co2Arr,savArr,pbArr,pitches,pitchOut,oLabels,orientPct,months12,deratedOut,underated,
+    month
+  };
+}
+
+// ══ RENDER ═════════════════════════════════════════════════════════════════
+function render(){
+  const r=compute();
+  const {doy,pitch,wx,batt,price}=S;
+
+  // Labels
+  document.getElementById('vd').textContent=`${doy} · ${fmtDate(doy)}`;
+  document.getElementById('dlbl').textContent=`Day ${doy} · ${fmtDate(doy)} · ${wx}`;
+  document.getElementById('annualbadge').textContent=`Annual: ${fmt(r.annualKwh/1000,1)} MWh`;
+  document.getElementById('battdate').textContent=fmtDate(doy);
+
+  // Metrics
+  document.getElementById('m1').textContent=fmt(r.dailyKwh,0);
+  document.getElementById('m2').textContent=fmt(r.peakKw,1);
+  document.getElementById('m3').textContent=fmt(r.kWp,0);
+  document.getElementById('m4').textContent=fmt(r.annualKwh/1000,1);
+  document.getElementById('m5').textContent=fmt(r.annualSavings,0);
+  document.getElementById('m6').textContent=fmt(r.co2t,1);
+  document.getElementById('m7').textContent=fmt(r.panelCount,0);
+  document.getElementById('m8').textContent=fmt(r.payback,1);
+  document.getElementById('m9').textContent=fmt(r.selfConsRate,1);
+  document.getElementById('m10').textContent=fmt(r.exportMWhYr/1000,1);
+  document.getElementById('ytot').textContent=`Total: ${fmt(r.annualKwh/1000,1)} MWh/yr`;
+
+  // Chart 1 — hourly
+  CHARTS.c1.data.labels=r.hours;
+  CHARTS.c1.data.datasets[0].data=r.hourlyKwh.map(v=>+v.toFixed(2));
+  CHARTS.c1.update('none');
+
+  // Chart 2 — monthly
+  CHARTS.c2.data.datasets[0].data=r.monthlyKwh.map(v=>Math.round(v));
+  CHARTS.c2.update('none');
+
+  // Heatmap
+  renderHeatmap(r);
+
+  // Roof
+  renderRoof();
+
+  // Battery charts
+  const hLabels=Array.from({length:20},(_,i)=>`${String(i+4).padStart(2,'0')}:00`);
+  CHARTS.cb1.data.labels=hLabels;
+  CHARTS.cb1.data.datasets[0].data=r.hourSelf.map(v=>+v.toFixed(2));
+  CHARTS.cb1.data.datasets[1].data=r.hourBatt.map(v=>Math.max(0,+v.toFixed(2)));
+  CHARTS.cb1.data.datasets[2].data=r.hourExp.map(v=>+v.toFixed(2));
+  CHARTS.cb1.data.datasets[3].data=r.hourImp.map(v=>+v.toFixed(2));
+  CHARTS.cb1.update('none');
+  CHARTS.cb2.data.datasets[0].data=r.monthlySCR;
+  CHARTS.cb2.data.datasets[1].data=r.monthlySF;
+  CHARTS.cb2.update('none');
+  CHARTS.cb3.data.labels=hLabels;
+  CHARTS.cb3.data.datasets[0].data=r.hourSoC.map(v=>+v.toFixed(1));
+  CHARTS.cb3.update('none');
+
+  document.getElementById('bv1').textContent=fmt(r.selfConsumed,1);
+  document.getElementById('bv2').textContent=fmt(r.exported,1);
+  document.getElementById('bv3').textContent=fmt(r.battCycles,0);
+  const battES=Math.max(0,r.battExtraSaving);
+  document.getElementById('bve1').textContent='$'+fmt(battES*365,0);
+  document.getElementById('bve2').textContent='$'+fmt(r.battInstallCost,0);
+  document.getElementById('bve3').textContent=fmt(battES*365>0?r.battInstallCost/(battES*365):99,1);
+
+  // Optimisation
+  CHARTS.co1.data.labels=r.covArr.map(v=>v+'%');
+  CHARTS.co1.data.datasets[0].data=r.co2Arr.map(v=>+v.toFixed(1));
+  CHARTS.co1.update('none');
+  CHARTS.co2c.data.labels=r.covArr.map(v=>v+'%');
+  CHARTS.co2c.data.datasets[0].data=r.savArr.map(v=>Math.round(v));
+  CHARTS.co2c.update('none');
+  CHARTS.co3.data.labels=r.covArr.map(v=>v+'%');
+  CHARTS.co3.data.datasets[0].data=r.pbArr;
+  CHARTS.co3.data.datasets[1].data=r.covArr.map(v=>v>=60&&v<=80?7:null);
+  CHARTS.co3.update('none');
+  CHARTS.co4.data.labels=r.pitches.map(v=>v+'°');
+  CHARTS.co4.data.datasets[0].data=r.pitchOut;
+  CHARTS.co4.update('none');
+  CHARTS.co5.data.datasets[0].data=r.orientPct;
+  CHARTS.co5.update('none');
+  CHARTS.co6.data.labels=MN;
+  CHARTS.co6.data.datasets[0].data=r.deratedOut.map(v=>+v.toFixed(1));
+  CHARTS.co6.data.datasets[1].data=r.underated.map(v=>+v.toFixed(1));
+  CHARTS.co6.update('none');
+
+  // Grants
+  document.getElementById('g1val').textContent='$'+fmt(r.dutyS,0)+' saved';
+  document.getElementById('g2val').textContent='$'+fmt(r.wbGrant,0)+' grant';
+  document.getElementById('g3val').textContent='Risk cover ~$'+fmt(r.installCost*0.10,0);
+  document.getElementById('g4val').textContent='$'+fmt(r.euGrant,0)+' co-finance';
+  document.getElementById('g5val').textContent='$'+fmt(r.customGrant,0);
+  document.getElementById('gtotal').textContent='$'+fmt(r.totalGrants,0);
+  document.getElementById('pb_before').textContent=r.pbBefore>30?'30+ yrs':fmt(r.pbBefore,1)+' yrs';
+  document.getElementById('pb_after').textContent=r.pbAfter>30?'30+ yrs':fmt(r.pbAfter,1)+' yrs';
+  document.getElementById('fs1').textContent='$'+fmt(r.installCost,0);
+  document.getElementById('fs2').textContent='$'+fmt(r.totalGrants,0);
+  document.getElementById('fs3').textContent='$'+fmt(r.netCost,0);
+  document.getElementById('fs4').textContent='$'+fmt(r.annuity,0);
+  document.getElementById('fs5').textContent='$'+fmt(Math.max(0,r.annualSavings-r.annuity),0);
+  document.getElementById('fs6').textContent='$'+fmt(r.npv25,0);
+
+  CHARTS.lcoe.data.datasets[0].data=[
+    +r.lcoe_solar.toFixed(4),+r.lcoe_batt.toFixed(4),+r.lcoe_grid.toFixed(4),+r.lcoe_diesel.toFixed(4),+r.lcoe_grant.toFixed(4)
+  ];
+  CHARTS.lcoe.update('none');
+
+  const yrs=Array.from({length:26},(_,i)=>i+'yr');
+  CHARTS.npv.data.labels=yrs;
+  CHARTS.npv.data.datasets[0].data=r.npvLow;
+  CHARTS.npv.data.datasets[1].data=r.npvMid;
+  CHARTS.npv.data.datasets[2].data=r.npvHigh;
+  CHARTS.npv.update('none');
+}
+
+function renderHeatmap(r){
+  const hm=document.getElementById('heatmap');
+  hm.innerHTML='';
+  const maxD=r.annualKwh/365*2;
+  const steps=[[0,'#ece9e1'],[0.2,'#f5c842'],[0.5,'#e8a020'],[0.75,'#c97010'],[1,'#8b4500']];
+  function col(v){const n=Math.min(1,v/maxD);let c=steps[0][1];for(let i=1;i<steps.length;i++){if(n<=steps[i][0]){const t=(n-steps[i-1][0])/(steps[i][0]-steps[i-1][0]);const h1=steps[i-1][1],h2=steps[i][1];const r1=parseInt(h1.slice(1,3),16),g1=parseInt(h1.slice(3,5),16),b1=parseInt(h1.slice(5,7),16);const r2=parseInt(h2.slice(1,3),16),g2=parseInt(h2.slice(3,5),16),b2=parseInt(h2.slice(5,7),16);return`rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;} c=steps[i][1];}return c;}
+  const {wx,pitch,orient}=S,eff_f=S.eff/100,panelArea=S.area*(S.cov/100);
+  const wxF={clear:1.10,partly:0.82,dusty:0.55,overcast:0.35,monthly:1.0};
+  for(let w=0;w<52;w++){
+    const col2=document.createElement('div');
+    col2.style.display='flex';col2.style.flexDirection='column';col2.style.gap='1.5px';
+    for(let d=0;d<7;d++){
+      const doy=w*7+d+1;if(doy>365)break;
+      const m=doyToMonth(doy),td=tempDerate(m,S.temp);
+      const {r:rise,s:set}=sunRS(doy),dl=Math.max(1,set-rise);
+      let tot=0;
+      for(let h=4;h<22;h++){
+        const x=(h+0.5-rise)/dl,bell=Math.max(0,Math.sin(Math.PI*x));
+        const g=wx==='monthly'?PVGIS[m]*1000/dl*Math.PI/2*bell:clearSkyG(doy,h+0.5)*Math.min(1,(KT[m]/0.6)*(wxF[wx]||1)*1.1);
+        const flat=Math.max(0,sinElev(doy,h+0.5));
+        const tf=flat>0.001?IAM(pitch,orient,doy,h+0.5)/flat:1;
+        tot+=Math.max(0,g*Math.max(0.05,Math.min(1.5,tf)))*panelArea*eff_f*PR*td/1000;
+      }
+      const cell=document.createElement('div');
+      cell.style.cssText=`height:8px;border-radius:1.5px;background:${col(tot)};cursor:default`;
+      cell.title=`${fmtDate(doy)}: ~${Math.round(tot).toLocaleString()} kWh`;
+      col2.appendChild(cell);
+    }
+    hm.appendChild(col2);
+  }
+}
+
+function renderRoof(){
+  const svg=document.getElementById('rsvg');
+  const {area,cov,orient,pitch}=S;
+  const W=560,rw=380,rh=148,rx=18,ry=11;
+  const pw=16,ph=9,gap=2.5;
+  const panelArea=area*(cov/100);
+  const cols=Math.floor((rw-12)/(pw+gap)),rows=Math.floor((rh-20)/(ph+gap));
+  const total=cols*rows,filled=Math.round(total*(cov/100));
+  const cx=rx+rw+68,cy=ry+rh/2,cR=27;
+  const aRad=(-parseFloat(orient)-90)*Math.PI/180;
+  const ax=cx+Math.cos(aRad)*cR*0.75,ay=cy+Math.sin(aRad)*cR*0.75;
+  const ax2=cx-Math.cos(aRad)*cR*0.4,ay2=cy-Math.sin(aRad)*cR*0.4;
+  let out=`<defs><marker id="aro2" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L7 4L1 7" fill="none" stroke="#e85020" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>`;
+  out+=`<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="4" fill="#c8d8b0" stroke="#90b068" stroke-width="1"/>`;
+  out+=`<text x="${rx+8}" y="${ry+13}" font-size="9" fill="#3a5a20" font-family="inherit" font-weight="700">ROOF (${(area/1000).toFixed(1)}k m²)</text>`;
+  let n=0;
+  outer:for(let rr=0;rr<rows;rr++){for(let c=0;c<cols;c++){
+    const px2=rx+7+c*(pw+gap),py2=ry+17+rr*(ph+gap);
+    const active=n<filled;
+    out+=`<rect x="${px2}" y="${py2}" width="${pw}" height="${ph}" rx="1" fill="${active?'#1a5ca8':'#c8d8b0'}" stroke="${active?'#0d3a7a':'#90b068'}" stroke-width="0.5" opacity="${active?0.88:0.3}"/>`;
+    if(active&&pw>10)out+=`<line x1="${px2+2}" y1="${py2+ph/2}" x2="${px2+pw-2}" y2="${py2+ph/2}" stroke="#4a90e2" stroke-width="0.4" opacity="0.5"/>`;
+    n++;if(n>=total)break outer;
+  }}
+  out+=`<circle cx="${cx}" cy="${cy}" r="${cR+5}" fill="var(--bg3)" stroke="var(--border)" stroke-width="0.5"/>`;
+  out+=`<circle cx="${cx}" cy="${cy}" r="${cR}" fill="none" stroke="var(--border)" stroke-width="0.5"/>`;
+  [{a:270,l:'N'},{a:0,l:'E'},{a:90,l:'S'},{a:180,l:'W'}].forEach(d=>{const r2=(d.a)*Math.PI/180;const lx=cx+Math.cos(r2)*(cR+12),ly=cy+Math.sin(r2)*(cR+12);out+=`<text x="${lx}" y="${ly}" font-size="9" text-anchor="middle" dominant-baseline="central" font-family="inherit" fill="var(--text3)">${d.l}</text>`;});
+  out+=`<line x1="${ax2}" y1="${ay2}" x2="${ax}" y2="${ay}" stroke="#e85020" stroke-width="2" stroke-linecap="round" marker-end="url(#aro2)"/>`;
+  out+=`<circle cx="${cx}" cy="${cy}" r="2.5" fill="#e85020"/>`;
+  document.getElementById('roofstats').textContent=`${fmt(panelArea)} m² covered · ${fmt(Math.floor(panelArea/PM2))} panels · pitch ${pitch}°`;
+  svg.innerHTML=out;
+}
+
+// ══ TABS ══════════════════════════════════════════════════════════════════
+function switchTab(tab){
+  document.querySelectorAll('.tab').forEach((t,i)=>{const ids=['generation','battery','optimisation','grants'];t.classList.toggle('active',ids[i]===tab)});
+  document.querySelectorAll('.panel').forEach(p=>{p.classList.toggle('active',p.id===`tab-${tab}`)});
+}
+
+// ══ CONTROLS ══════════════════════════════════════════════════════════════
+function bindRange(id, key, labelId, fmt_fn){
+  document.getElementById(id).addEventListener('input',function(){
+    S[key]=+this.value;
+    if(labelId)document.getElementById(labelId).textContent=fmt_fn(S[key]);
+    render();
+  });
+}
+document.getElementById('idoy').addEventListener('input',function(){S.doy=+this.value;document.getElementById('vd').textContent=`${S.doy} · ${fmtDate(S.doy)}`;render()});
+document.getElementById('iwx').addEventListener('change',function(){S.wx=this.value;render()});
+document.getElementById('iorient').addEventListener('change',function(){S.orient=+this.value;render()});
+bindRange('ipitch','pitch','vp',v=>v+'°');
+bindRange('ieff','eff','ve',v=>v.toFixed(1)+'%');
+bindRange('iarea','area','va',v=>fmt(v)+' m²');
+bindRange('icov','cov','vc',v=>v+'%');
+bindRange('itemp','temp','vtemp',v=>v===0?'Auto':v+'% extra loss');
+bindRange('iprice','price','vpr',v=>'$'+v.toFixed(2)+'/kWh');
+bindRange('iinstall','install','vinstall',v=>'$'+v+'/kWp');
+bindRange('ibatt','batt','vbatt',v=>fmt(v)+' kWh');
+bindRange('ibeff','beff','vbeff',v=>v+'%');
+bindRange('iload','load','vload',v=>fmt(v)+' kW');
+bindRange('igrant','grant','vgrant',v=>v+'%');
+bindRange('iloan','loan','vloan',v=>v.toFixed(1)+'%');
+
+// ══ INIT ══════════════════════════════════════════════════════════════════
+initCharts();
+render();
+</script>
+</body>
+</html>
