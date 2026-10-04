@@ -52,10 +52,14 @@ export async function closeInputs(page, testInfo) {
 export const nextFrame = page =>
   page.waitForFunction(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))));
 
+// Sets an input the way a user would. Log-scale sliders (area, load) are set via their number box.
 export async function setInput(page, key, value) {
-  await page.locator('#in-' + key).evaluate((el, v) => {
+  const box = page.locator('#num-' + key);
+  const target = (await box.count()) ? box : page.locator('#in-' + key);
+  await target.evaluate((el, v) => {
     el.value = v;
-    el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    const evt = el.tagName === 'SELECT' || el.type === 'number' || el.type === 'date' ? 'change' : 'input';
+    el.dispatchEvent(new Event(evt, { bubbles: true }));
   }, String(value));
   await nextFrame(page);
 }

@@ -10,6 +10,7 @@
 // long-term monthly irradiation and temperature for that place (NASA POWER).
 
 import { CITIES } from './locations.js';
+import { parseRoof } from './geo.js';
 
 export { CITIES };
 export const DEFAULT_CLIMATE = Object.freeze({ ...CITIES[0], source: 'NASA POWER (built-in)' }); // Baghdad
@@ -78,10 +79,11 @@ export const DEFAULTS = Object.freeze({
   price: 0.10, dieselShare: 0, dieselCost: 0.28, exportTariff: 0.05, install: 950,
   load: 800, shift: 'day', workDays: 6, houseKwh: 30, batt: 0, battCost: 350, beff: 90,
   dutyOn: 1, euOn: 0, grant: 0, loan: 5,
+  roof: '', roofType: 'flat', roofFlip: 0,   // roof drawn on the map (geo.js formatRoof); not used by the maths directly
 });
 
 // Text-valued inputs and their allowed values
-export const ENUMS = { wx: Object.keys(WEATHER), shift: Object.keys(SHIFTS), building: Object.keys(BUILDINGS) };
+export const ENUMS = { wx: Object.keys(WEATHER), shift: Object.keys(SHIFTS), building: Object.keys(BUILDINGS), roofType: ['flat', 'pitched'] };
 
 // Numeric limits [min, max, step] — used by the UI sliders and to sanitise shared URLs.
 export const LIMITS = {
@@ -90,7 +92,7 @@ export const LIMITS = {
   orient: [-180, 180, 1], soiling: [0, 20, 1], temp: [0, 20, 1], price: [0.03, 0.35, 0.01],
   dieselShare: [0, 100, 5], dieselCost: [0.15, 0.50, 0.01], exportTariff: [0, 0.15, 0.01], install: [500, 1800, 50],
   load: [1, 5000, 1], workDays: [5, 7, 1], houseKwh: [2, 300, 1], batt: [0, 5000, 5], battCost: [150, 800, 10],
-  beff: [80, 97, 1], dutyOn: [0, 1, 1], euOn: [0, 1, 1], grant: [0, 60, 5], loan: [0, 15, 0.5],
+  beff: [80, 97, 1], dutyOn: [0, 1, 1], euOn: [0, 1, 1], grant: [0, 60, 5], loan: [0, 15, 0.5], roofFlip: [0, 1, 1],
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -394,7 +396,7 @@ export function yearDaily(input, clim = DEFAULT_CLIMATE) {
 }
 
 // ── state (URL sharing) ────────────────────────────────────────────────────
-const INT_KEYS = new Set(['doy', 'workDays', 'dutyOn', 'euOn']);
+const INT_KEYS = new Set(['doy', 'workDays', 'dutyOn', 'euOn', 'roofFlip']);
 
 // Unspecified inputs fall back to the building type's defaults (so a link with just
 // building=house gets house-sized values), and links only store differences from them.
@@ -405,6 +407,7 @@ export function sanitizeState(input = {}) {
   for (const [k, v] of Object.entries(input)) {
     if (!(k in DEFAULTS)) continue;
     if (k in ENUMS) { if (ENUMS[k].includes(v)) s[k] = v; continue; }
+    if (k === 'roof') { if (v === '' || parseRoof(v)) s.roof = v; continue; }
     const n = Number(v);
     if (v === '' || v === null || !Number.isFinite(n)) continue;
     const [lo, hi] = LIMITS[k];
@@ -432,6 +435,6 @@ export function monthlyCsv(r) {
   rows.push(['Location', `"${r.climate.name}"`]);
   rows.push(['Climate source', `"${r.climate.source}"`]);
   rows.push(['Parameter', 'Value']);
-  Object.entries(r.state).forEach(([k, v]) => { if (k !== 'clim') rows.push([k, v]); });
+  Object.entries(r.state).forEach(([k, v]) => { if (k !== 'clim') rows.push([k, /[,;"]/.test(String(v)) ? `"${v}"` : v]); });
   return rows.map(r => r.join(',')).join('\n');
 }

@@ -49,7 +49,7 @@ test('a 10 m² roof can be typed in and shows decimals, not "1 kWp"', async ({ p
   const box = page.locator('#num-area');
   await box.fill('10');
   await box.blur();
-  await expect(page.locator('#in-area')).toHaveValue('10');
+  await expect(page.locator('#in-area')).toHaveValue('0');           // log slider at its minimum
   await expect(metric(page, 'kwp')).toHaveText('1.4');
   await expect(metric(page, 'panels')).toHaveText('4');
   expect(await num(metric(page, 'annual'))).toBeGreaterThan(1);
@@ -125,7 +125,7 @@ test('reset restores defaults', async ({ page }, testInfo) => {
   await load(page, '#pitch=40&area=20000');
   await page.locator('#btn-reset').click();
   await expect(page.locator('#in-pitch')).toHaveValue('15');
-  await expect(page.locator('#in-area')).toHaveValue('5000');
+  await expect(page.locator('#num-area')).toHaveValue('5000');
   expect(await num(metric(page, 'kwp'))).toBe(700);
   await expect(page).not.toHaveURL(/#./);
 });

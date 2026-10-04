@@ -80,6 +80,42 @@ describe('roof drawing geometry', () => {
   });
 });
 
+describe('drawn roof → model inputs', () => {
+  test('roof outline round-trips through the URL format', () => {
+    const pts = rect(12, 8, 20);
+    const back = G.parseRoof(G.formatRoof(pts));
+    assert.equal(back.length, 4);
+    near(G.polygonArea(back), 96, 0.5);
+    assert.deepEqual(M.decodeState('#' + new URLSearchParams({ roof: G.formatRoof(pts) })).roof, G.formatRoof(pts));
+  });
+
+  test('malformed or hostile roof strings are rejected', () => {
+    for (const bad of ['1,2;3,4', 'abc', '1,2;3,4;5', '<script>;1,1;2,2', '91,0;1,1;2,2', Array(70).fill('1,1').join(';')]) {
+      assert.equal(G.parseRoof(bad), null, bad.slice(0, 20));
+      assert.equal(M.decodeState('#' + new URLSearchParams({ roof: bad })).roof, '', bad.slice(0, 20));
+    }
+  });
+
+  test('flat roof: area = plan area, racks face south', () => {
+    const a = G.roofApplied(rect(12, 8, 30), { roofType: 'flat', pitch: 25, lat: 33 });
+    near(a.area, 96, 0.5);
+    assert.equal(a.orient, 0);
+  });
+
+  test('pitched roof: sloped area = plan ÷ cos(tilt); flip faces the other way', () => {
+    const p = rect(15, 10);
+    const a = G.roofApplied(p, { roofType: 'pitched', pitch: 30, lat: 33 });
+    near(a.area, 150 / Math.cos(Math.PI / 6), 0.5);
+    assert.equal(Math.abs(a.orient), 0);
+    assert.equal(Math.abs(G.roofApplied(p, { roofType: 'pitched', roofFlip: 1, pitch: 30, lat: 33 }).orient), 180);
+  });
+
+  test('house presets do not include roof geometry keys that would hide a drawn roof', () => {
+    // app.js keeps area/orient when a roof is drawn; this guards the preset shape it relies on
+    assert.ok('area' in M.PRESETS.house && !('roof' in M.PRESETS.house));
+  });
+});
+
 describe('locations & climate', () => {
   test('20 built-in Iraqi cities with complete NASA POWER data', () => {
     assert.equal(M.CITIES.length, 20);

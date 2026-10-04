@@ -92,7 +92,7 @@
         </div>
 
         <div class="card" id="roof-result" hidden>
-          <div class="card-title">Roof measurement <span>applied to the model</span></div>
+          <div class="card-title">Roof measurement <span id="rr-status">applied to the model</span></div>
           <div class="roof-type" role="radiogroup" aria-label="Roof type">
             <label class="chk"><input type="radio" name="rooftype" value="flat" checked> Flat roof (most Iraqi houses)</label>
             <label class="chk"><input type="radio" name="rooftype" value="pitched"> Pitched / sloped roof face</label>
@@ -104,7 +104,10 @@
             <div class="batt-stat"><div class="v"><span id="rr-perim">—</span> m</div><div class="l">Perimeter</div></div>
             <div class="batt-stat wide"><div class="v" id="rr-edge">—</div><div class="l">Longest edge (ridge / eave line)</div></div>
           </div>
-          <div id="flip-row" class="flip-row" hidden><button class="btn" type="button" id="btn-flip">⇄ Other side of the ridge</button></div>
+          <div class="flip-row">
+            <button class="btn" type="button" id="btn-apply-roof" hidden>↺ Use the drawn roof again</button>
+            <span id="flip-row" hidden><button class="btn" type="button" id="btn-flip">⇄ Other side of the ridge</button></span>
+          </div>
           <p class="note" id="rr-note"></p>
         </div>
 

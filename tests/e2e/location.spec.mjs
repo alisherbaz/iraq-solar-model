@@ -147,6 +147,127 @@ test('a shared link restores location, building and roof inputs', async ({ page 
   expect(page.__calls.power).toBe(0);                                   // built-in city: no network needed
 });
 
+// ── The drawn roof drives the sidebar and every tab (regression for user report) ──
+test('@smoke drawn roof sets the sidebar area slider and is used on the Generation tab', async ({ page }, testInfo) => {
+  await load(page);
+  await openMap(page);
+  await drawRect(page, 120, 80);
+  const drawn = await num(page.locator('#rr-area'));
+  const box = Number(await page.locator('#num-area').inputValue());
+  expect(Math.abs(box - drawn)).toBeLessThan(1);
+  // log slider: a few-hundred m² roof sits well inside the track, not pinned to the left
+  const pos = Number(await page.locator('#in-area').inputValue());
+  expect(pos).toBeGreaterThan(250);
+  await expect(page.locator('#roof-link')).toContainText('From your roof drawing');
+  await page.locator('.tab[data-tab="generation"]').click();
+  await expect(page.locator('#roofstats')).toContainText('from your map drawing');
+  const panels = await num(metric(page, 'panels'));
+  expect(panels).toBe(Math.floor(box * 0.7 / 1.75 + 1e-9));            // 70% coverage, 1.75 m² panels
+});
+
+test('switching to House keeps the drawn roof (does not reset to 150 m²)', async ({ page }, testInfo) => {
+  await load(page);
+  await openMap(page);
+  await drawRect(page, 120, 80);
+  const drawn = Number(await page.locator('#num-area').inputValue());
+  await openInputs(page, testInfo);
+  await page.locator('#in-building').selectOption('house');
+  await nextFrame(page);
+  expect(Number(await page.locator('#num-area').inputValue())).toBe(drawn);
+  await expect(page.locator('#roof-link')).toContainText('From your roof drawing');
+  await expect(page.locator('#num-houseKwh')).toHaveValue('30');      // other house defaults still applied
+});
+
+test('the drawn roof survives a reload and is redrawn on the map', async ({ page }) => {
+  await load(page);
+  await openMap(page);
+  await drawRect(page, 120, 80);
+  const drawn = await page.locator('#num-area').inputValue();
+  await expect(page).toHaveURL(/roof=/);
+  await page.reload();
+  await expect(page.locator('body[data-ready="1"]')).toBeAttached();
+  await expect(page.locator('#num-area')).toHaveValue(drawn);
+  await openMap(page);
+  await expect(page.locator('.vtx')).toHaveCount(4);
+  await expect(page.locator('#roof-result')).toBeVisible();
+  await expect(page.locator('#rr-status')).toHaveText('applied to the model');
+});
+
+test('editing the area by hand unlinks the roof; "Use drawn roof" restores it', async ({ page }, testInfo) => {
+  await load(page);
+  await openMap(page);
+  await drawRect(page, 120, 80);
+  const drawn = await page.locator('#num-area').inputValue();
+  await openInputs(page, testInfo);
+  await setInput(page, 'area', 2000);
+  await expect(page.locator('#roof-link')).toContainText('Changed by hand');
+  await page.locator('#roof-link button', { hasText: 'Use drawn roof' }).click();
+  await expect(page.locator('#num-area')).toHaveValue(drawn);
+  await expect(page.locator('#roof-link')).toContainText('From your roof drawing');
+});
+
+test('pitched roof: changing the tilt updates the sloped area automatically', async ({ page }, testInfo) => {
+  await load(page);
+  await openMap(page);
+  await drawRect(page, 120, 80);
+  const plan = await num(page.locator('#rr-plan'));
+  await page.locator('input[name="rooftype"][value="pitched"]').check();
+  await nextFrame(page);
+  await openInputs(page, testInfo);
+  await setInput(page, 'pitch', 35);
+  const area = Number(await page.locator('#num-area').inputValue());
+  expect(area / plan).toBeCloseTo(1 / Math.cos(35 * Math.PI / 180), 1);
+  await expect(page.locator('#roof-link')).toContainText('From your roof drawing (pitched');
+});
+
+test('a link with a roof but no area takes the area from the roof', async ({ page }) => {
+  const roof = '33.3150000,44.3660000;33.3150000,44.3662000;33.3148500,44.3662000;33.3148500,44.3660000';
+  await load(page, '#building=house&roof=' + encodeURIComponent(roof));
+  expect(Number(await page.locator('#num-area').inputValue())).toBeCloseTo(310, -1); // ~18.6 m × 16.7 m
+  await expect(page.locator('#roof-link')).toContainText('From your roof drawing');
+});
+
+// ── Calendar date picker ──
+test('date picker: choose a date, step days, quick-pick solstice', async ({ page }, testInfo) => {
+  await load(page);
+  await openInputs(page, testInfo);
+  await expect(page.locator('#in-doy')).toHaveAttribute('type', 'date');
+  await expect(page.locator('#in-doy')).toHaveValue('2026-06-21');
+  await page.locator('#in-doy').fill('2026-10-08');
+  await nextFrame(page);
+  await expect(page.locator('#v-doy')).toHaveText('day 281 of 365');
+  await expect(page).toHaveURL(/doy=281/);
+  await page.locator('[data-doy-step="1"]').click();
+  await expect(page.locator('#in-doy')).toHaveValue('2026-10-09');
+  await page.locator('[data-doy="355"]').click();
+  await expect(page.locator('#in-doy')).toHaveValue('2026-12-21');
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await page.locator('[data-doy-step="1"]').click();
+  await expect(page.locator('#in-doy')).toHaveValue('2026-01-01');   // wraps to New Year
+  await closeInputs(page, testInfo);
+  await expect(page.locator('#dlbl')).toContainText('Jan 1');
+});
+
+test('winter date produces less than summer date', async ({ page }, testInfo) => {
+  await load(page);
+  await openInputs(page, testInfo);
+  await page.locator('[data-doy="172"]').click();
+  await nextFrame(page);
+  const jun = await num(metric(page, 'daily'));
+  await page.locator('[data-doy="355"]').click();
+  await nextFrame(page);
+  expect(await num(metric(page, 'daily'))).toBeLessThan(jun * 0.75);
+});
+
 test('map and drawing tools fit on a phone screen', async ({ page }, testInfo) => {
   test.skip(!isMobile(testInfo), 'mobile only');
   await load(page);

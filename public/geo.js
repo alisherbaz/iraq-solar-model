@@ -58,6 +58,35 @@ export function roofGeometry(pts, lat = 33) {
   };
 }
 
+// ── Drawn roof ↔ URL state ("lat,lng;lat,lng;…") and roof → model inputs ─────
+const MAX_ROOF_PTS = 60;
+
+export function formatRoof(pts) {
+  return pts.map(p => `${p.lat.toFixed(7)},${p.lng.toFixed(7)}`).join(';'); // 7 dp ≈ 1 cm
+}
+
+// Returns an array of {lat,lng} (≥ 3 points) or null for anything malformed.
+export function parseRoof(str) {
+  if (typeof str !== 'string' || !str || str.length > MAX_ROOF_PTS * 30) return null;
+  if (!/^[0-9.,;-]+$/.test(str)) return null;
+  const pts = str.split(';').slice(0, MAX_ROOF_PTS + 1).map(s => s.split(',').map(Number));
+  if (pts.length < 3 || pts.length > MAX_ROOF_PTS) return null;
+  if (!pts.every(p => p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180)) return null;
+  return pts.map(([lat, lng]) => ({ lat, lng }));
+}
+
+// The roof area and panel azimuth the model should use for a drawn roof.
+//   flat    → area = plan area, racks face the equator
+//   pitched → area = plan area ÷ cos(tilt), panels face perpendicular to the ridge (or the other side)
+export function roofApplied(pts, { roofType = 'flat', roofFlip = 0, pitch = 0, lat = 33 } = {}) {
+  const geom = roofGeometry(pts, lat);
+  if (!geom) return null;
+  if (roofType === 'pitched') {
+    return { geom, area: geom.area / Math.cos(pitch * Math.PI / 180), orient: Math.round(roofFlip ? geom.altFacing : geom.facing) };
+  }
+  return { geom, area: geom.area, orient: lat >= 0 ? 0 : 180 };
+}
+
 export function haversine(a, b) {
   const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;

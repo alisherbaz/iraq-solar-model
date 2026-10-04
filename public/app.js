@@ -2,7 +2,7 @@ import {
   C, MN, MDAYS, DEFAULTS, LIMITS, ENUMS, WEATHER, SHIFTS, BUILDINGS, PRESETS, CITIES, DEFAULT_CLIMATE,
   runModel, yearDaily, systemSize, loadProfile, encodeState, decodeState, monthlyCsv, clamp,
 } from './model.js';
-import { azimuthLabel, nearestCity, haversine, powerUrl, parsePower } from './geo.js';
+import { azimuthLabel, nearestCity, haversine, powerUrl, parsePower, parseRoof, roofApplied } from './geo.js';
 import { createMapPanel } from './map.js';
 
 const $ = id => document.getElementById(id);
@@ -20,10 +20,10 @@ const CONTROLS = [
   { key: 'building', label: 'Building type', options: Object.entries(BUILDINGS).map(([v, label]) => ({ v, label })) },
   { custom: 'location' },
   { sect: 'Selected day' },
-  { key: 'doy', label: 'Day of year', fmt: v => `${v} · ${fmtDate(v)}` },
+  { key: 'doy', label: 'Date', date: true, fmt: v => `day ${v} of 365` },
   { key: 'wx', label: 'Weather (selected day only)', options: Object.entries(WEATHER).map(([v, w]) => ({ v, label: w.label })) },
   { sect: 'Roof & panels' },
-  { key: 'area', label: 'Total roof area', num: 'm²' },
+  { key: 'area', label: 'Total roof area', num: 'm²', log: true, roofLink: true },
   { key: 'orient', label: 'Panels face', fmt: v => azimuthLabel(v), hint: 'Compass direction the panels face. South is best in Iraq.' },
   { key: 'pitch', label: 'Panel tilt', fmt: v => v + '°' },
   { key: 'eff', label: 'Panel efficiency', fmt: v => v.toFixed(1) + '%' },
@@ -33,7 +33,7 @@ const CONTROLS = [
   { sect: 'Electricity use', only: 'house' },
   { key: 'houseKwh', label: 'Average household use', num: 'kWh/day', only: 'house', hint: 'Annual average; summer is higher, spring lower' },
   { sect: 'Factory load', only: 'factory' },
-  { key: 'load', label: 'Load during operating hours', num: 'kW', only: 'factory' },
+  { key: 'load', label: 'Load during operating hours', num: 'kW', log: true, only: 'factory' },
   { key: 'shift', label: 'Operating hours', options: Object.entries(SHIFTS).map(([v, s]) => ({ v, label: s.label })), only: 'factory' },
   { key: 'workDays', label: 'Operating days per week', fmt: v => v + ' days', hint: 'Closed days run at 15% base load', only: 'factory' },
   { sect: 'Energy prices' },
@@ -75,13 +75,22 @@ function buildControls() {
       ? `<span class="fv"><input type="number" class="num" id="num-${c.key}" data-key="${c.key}" min="${lo}" max="${hi}" step="any" inputmode="decimal" aria-label="${c.label} (${c.num})"> ${c.num}</span>`
       : c.fmt ? `<span class="fv" id="v-${c.key}"></span>` : '';
     const head = `<div class="fl"><label for="${id}">${c.label}</label>${value}</div>`;
-    const input = c.options
-      ? `<select id="${id}" data-key="${c.key}">${c.options.map(o => `<option value="${o.v}">${o.label}</option>`).join('')}</select>`
-      : `<input type="range" id="${id}" data-key="${c.key}" min="${LIMITS[c.key][0]}" max="${LIMITS[c.key][1]}" step="${LIMITS[c.key][2]}"${c.hint ? ` title="${c.hint}"` : ''}>`;
-    return `<div class="fld"${only}>${head}${input}${c.hint ? `<div class="hint">${c.hint}</div>` : ''}</div>`;
+    let input;
+    if (c.date) input = DATE_HTML;
+    else if (c.options) input = `<select id="${id}" data-key="${c.key}">${c.options.map(o => `<option value="${o.v}">${o.label}</option>`).join('')}</select>`;
+    else if (c.log) input = `<input type="range" id="${id}" data-key="${c.key}" data-log="1" min="0" max="${LOG_STEPS}" step="1" aria-label="${c.label} (logarithmic scale)">`;
+    else input = `<input type="range" id="${id}" data-key="${c.key}" min="${lo}" max="${hi}" step="${LIMITS[c.key][2]}">`;
+    const link = c.roofLink ? '<div class="roof-link" id="roof-link" hidden></div>' : '';
+    return `<div class="fld"${only}>${head}${input}${link}${c.hint ? `<div class="hint">${c.hint}</div>` : ''}</div>`;
   }).join('');
   root.addEventListener('input', onInput);
   root.addEventListener('change', onInput);
+  root.addEventListener('click', e => {
+    const b = e.target.closest('[data-doy-step],[data-doy]');
+    if (b) setDoy(b.dataset.doy === 'today' ? todayDoy() : b.dataset.doy ? +b.dataset.doy : S.doy + +b.dataset.doyStep);
+    if (e.target.closest('#roof-link [data-act="apply"]')) applyRoof(true);
+    if (e.target.closest('#roof-link [data-act="map"]')) goToMap();
+  });
   $('in-city').addEventListener('change', e => {
     if (e.target.value === 'custom') return goToMap();
     const c = CITIES[+e.target.value];
@@ -97,30 +106,73 @@ function goToMap() {
   $('tab-location').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ── Date picker (any year maps onto a 365-day model year; 29 Feb → 28 Feb) ──
+const MODEL_YEAR = 2026; // a non-leap year, so the calendar has exactly 365 days
+const doyToIso = doy => new Date(Date.UTC(MODEL_YEAR, 0, doy)).toISOString().slice(0, 10);
+function isoToDoy(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return null;
+  const mo = clamp(+m[2], 1, 12), d = clamp(+m[3], 1, MDAYS[mo - 1]);
+  return MDAYS.slice(0, mo - 1).reduce((a, b) => a + b, 0) + d;
+}
+const todayDoy = () => { const t = new Date(); return isoToDoy(`2026-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`); };
+const DATE_HTML = `<div class="date-row">
+  <button class="btn" type="button" data-doy-step="-1" aria-label="Previous day">‹</button>
+  <input type="date" id="in-doy" data-key="doy" min="${MODEL_YEAR}-01-01" max="${MODEL_YEAR}-12-31" required>
+  <button class="btn" type="button" data-doy-step="1" aria-label="Next day">›</button>
+</div>
+<div class="date-chips" aria-label="Quick dates">
+  <button class="btn" type="button" data-doy="today">Today</button>
+  <button class="btn" type="button" data-doy="80" title="Spring equinox">21 Mar</button>
+  <button class="btn" type="button" data-doy="172" title="Summer solstice: longest day">21 Jun</button>
+  <button class="btn" type="button" data-doy="266" title="Autumn equinox">23 Sep</button>
+  <button class="btn" type="button" data-doy="355" title="Winter solstice: shortest day">21 Dec</button>
+</div>`;
+function setDoy(doy) {
+  S.doy = ((Math.round(doy) - 1 + 365) % 365) + 1; // wraps 31 Dec ↔ 1 Jan
+  syncControls();
+  scheduleRender();
+}
+
+// ── Log-scale sliders (roof area, load) so a 100 m² house and a 50,000 m² factory are both easy to set
+const LOG_STEPS = 1000;
+const toPos = (k, v) => { const [lo, hi] = LIMITS[k]; return Math.round(LOG_STEPS * Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo)); };
+function fromPos(k, pos) {
+  const [lo, hi] = LIMITS[k], v = lo * (hi / lo) ** (pos / LOG_STEPS);
+  const r = v < 20 ? Math.round(v * 2) / 2 : v < 1000 ? Math.round(v) : v < 10000 ? Math.round(v / 10) * 10 : Math.round(v / 100) * 100;
+  return clamp(r, lo, hi);
+}
+
 function onInput(e) {
   const el = e.target, k = el.dataset.key;
   if (!k) return;
   let v;
   if (el.type === 'checkbox') v = el.checked ? 1 : 0;
   else if (k in ENUMS) v = el.value;
+  else if (el.type === 'date') { v = isoToDoy(el.value); if (v == null) { if (e.type === 'change') syncControls(); return; } }
+  else if (el.dataset.log) v = fromPos(k, +el.value);
   else {
     v = parseFloat(el.value);
     if (!Number.isFinite(v)) { if (e.type === 'change') syncControls(); return; } // empty box: restore on blur
-    if (LIMITS[k]) {                            // orientation is a fixed option list, no range
-      const [lo, hi] = LIMITS[k];
-      if (el.type === 'number' && e.type === 'input' && (v < lo || v > hi)) return; // wait for blur to clamp
-      v = clamp(v, lo, hi);
-    }
+    const [lo, hi] = LIMITS[k];
+    if (el.type === 'number' && e.type === 'input' && (v < lo || v > hi)) return; // wait for blur to clamp
+    v = clamp(v, lo, hi);
   }
   if (S[k] === v && e.type === 'change' && el.type !== 'number') return;
+  const wasLinked = roofLinked();
   S[k] = v;
   if (k === 'building') {
-    Object.assign(S, PRESETS[v]);
-    toast(v === 'house' ? 'House defaults: 150 m² roof, 30 kWh/day, 10 kWh battery' : 'Factory defaults: 5,000 m² roof, 800 kW load');
+    // Presets never overwrite a roof the user has drawn on the map
+    const keep = S.roof ? ['area', 'orient', ...(S.roofType === 'pitched' ? ['pitch'] : [])] : [];
+    for (const [pk, pv] of Object.entries(PRESETS[v])) if (!keep.includes(pk)) S[pk] = pv;
+    toast(v === 'house'
+      ? `House defaults applied${S.roof ? ' — keeping your drawn roof' : ': 150 m² roof'}, 30 kWh/day, 10 kWh battery`
+      : `Factory defaults applied${S.roof ? ' — keeping your drawn roof' : ': 5,000 m² roof'}, 800 kW load`);
   }
+  // Tilt changes the sloped area of a pitched roof: keep a linked roof in step
+  if (wasLinked && (k === 'pitch' || k === 'building')) applyRoof(false);
   // Don't rewrite the number box the user is typing in; do clamp it once they leave it
   syncControls(el.type === 'number' && e.type === 'input' ? el : null);
-  if (k === 'pitch') mapPanel.refresh(); // sloped roof area depends on tilt
   scheduleRender();
 }
 
@@ -129,10 +181,13 @@ function syncControls(skip = null) {
     if (!c.key) continue;
     const el = $('in-' + c.key);
     if (c.check) el.checked = !!S[c.key];
+    else if (c.date) { if (el !== skip) el.value = doyToIso(S.doy); }
+    else if (c.log) { if (el !== skip) el.value = toPos(c.key, S[c.key]); }
     else if (el !== skip) el.value = S[c.key];
     const num = c.num && $('num-' + c.key);
     if (num && num !== skip) num.value = +(+S[c.key]).toFixed(1);
   }
+  syncRoofLink();
   // Show only the inputs relevant to the building type
   document.querySelectorAll('#controls-body [data-only]').forEach(el => { el.hidden = el.dataset.only !== S.building; });
   const ci = CITIES.findIndex(c => haversine({ lat: S.lat, lon: S.lon }, c) < 1);
@@ -188,15 +243,67 @@ async function setLocation(lat, lon, how) {
   if (how === 'map' || how === 'search' || how === 'gps') toast(`Location set: ${CLIM.name}`);
 }
 
-function onRoof({ area, orient, type, announce }) {
-  S.area = Math.round(clamp(area, ...LIMITS.area) * 10) / 10;
-  S.orient = Math.round(orient);
+// ══ DRAWN ROOF → MODEL ══════════════════════════════════════════════════════
+// The roof outline lives in S.roof (and the URL). While "linked", the model's roof area
+// and panel orientation are taken from it; editing either by hand unlinks it until the
+// user presses "Use drawn roof" again.
+function roofDerived() {
+  const pts = parseRoof(S.roof);
+  if (!pts) return null;
+  const a = roofApplied(pts, S);
+  return { ...a, area: Math.round(clamp(a.area, ...LIMITS.area) * 10) / 10 };
+}
+function roofLinked() {
+  const d = roofDerived();
+  return !!d && Math.abs(d.area - S.area) < 0.06 && d.orient === S.orient;
+}
+function applyRoof(announce) {
+  const d = roofDerived();
+  if (!d) return;
+  S.area = d.area;
+  S.orient = d.orient;
   syncControls();
   scheduleRender();
-  if (announce) toast(`Roof applied: ${fmt(S.area, S.area < 100 ? 1 : 0)} m², panels face ${azimuthLabel(S.orient)}${type === 'flat' ? ' (racks)' : ''}`);
+  flash('num-area');
+  if (announce) toast(`Roof applied: ${fmt(S.area, S.area < 100 ? 1 : 0)} m², panels face ${azimuthLabel(S.orient)}${S.roofType === 'flat' ? ' (racks)' : ''}`);
+}
+// A link that carries a roof but no explicit area/orientation takes them from the roof
+function stateFromHash() {
+  S = decodeState(location.hash);
+  const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const d = roofDerived();
+  if (d && !p.has('area')) S.area = d.area;
+  if (d && !p.has('orient')) S.orient = d.orient;
 }
 
-const mapPanel = createMapPanel({ getState: () => S, onPick: setLocation, onRoof, toast: (...a) => toast(...a) });
+function onRoofChange({ roof, announce }) {
+  S.roof = roof;
+  if (roof) applyRoof(announce);
+  else { syncControls(); scheduleRender(); }
+}
+function syncRoofLink() {
+  const box = $('roof-link'), d = roofDerived();
+  box.hidden = !d;
+  if (!d) return;
+  const linked = roofLinked();
+  box.classList.toggle('manual', !linked);
+  box.innerHTML = linked
+    ? `📐 From your roof drawing (${S.roofType}, faces ${azimuthLabel(d.orient)}) · <button type="button" data-act="map">edit on map</button>`
+    : `✏️ Changed by hand. Your drawn roof is ${fmt(d.area, d.area < 100 ? 1 : 0)} m² facing ${azimuthLabel(d.orient)}. <button type="button" data-act="apply">Use drawn roof</button>`;
+}
+function flash(id) {
+  const el = $(id);
+  el?.classList.remove('flash'); void el?.offsetWidth; el?.classList.add('flash');
+}
+
+const mapPanel = createMapPanel({ getState: () => S, onPick: setLocation, onRoofChange, toast: (...a) => toast(...a) });
+
+// Roof-card controls (flat/pitched, flip side, re-apply)
+document.querySelectorAll('input[name="rooftype"]').forEach(r => r.addEventListener('change', () => {
+  S.roofType = r.value; S.roofFlip = 0; applyRoof(true);
+}));
+$('btn-flip').addEventListener('click', () => { S.roofFlip = S.roofFlip ? 0 : 1; applyRoof(true); });
+$('btn-apply-roof').addEventListener('click', () => applyRoof(true));
 
 // ══ CHARTS ══════════════════════════════════════════════════════════════════
 const CHARTS = {};
@@ -280,6 +387,7 @@ function renderLocation(r) {
   text('cl-latlon', `${S.lat.toFixed(3)}, ${S.lon.toFixed(3)}`);
   $('gmaps').href = mapPanel.googleUrl(S.lat, S.lon);
   setData('cl1', cl.ghi, cl.tamb);
+  mapPanel.renderCard(S, roofLinked());
 }
 
 function setData(id, ...arrays) {
@@ -465,7 +573,7 @@ function renderRoof() {
   out += `<circle cx="${cx}" cy="${cy}" r="2.5" fill="#e85020"/>`;
   out += `<text x="${cx}" y="${ry + rh + 6}" font-size="9" text-anchor="middle" fill="var(--text3)">panels face</text>`;
   $('rsvg').innerHTML = out;
-  text('roofstats', `${fmt(panelArea, panelArea < 100 ? 1 : 0)} m² covered · ${fmt(panelCount)} panels · tilt ${pitch}°${slots > cols * rows ? ' · not to scale' : ''}`);
+  text('roofstats', `${roofLinked() ? '📐 from your map drawing · ' : ''}${fmt(panelArea, panelArea < 100 ? 1 : 0)} m² covered · ${fmt(panelCount)} panels · tilt ${pitch}°${slots > cols * rows ? ' · not to scale' : ''}`);
 }
 
 // ══ TABS ════════════════════════════════════════════════════════════════════
@@ -528,12 +636,12 @@ $('btn-csv').addEventListener('click', () => {
 $('btn-print').addEventListener('click', () => window.print());
 $('btn-reset').addEventListener('click', () => {
   S = { ...DEFAULTS }; CLIM = DEFAULT_CLIMATE;
-  syncControls(); render(); mapPanel.setView(S.lat, S.lon, 14);
+  syncControls(); render(); mapPanel.setView(S.lat, S.lon, 14); mapPanel.loadRoof();
   toast('Inputs reset to defaults');
 });
 window.addEventListener('hashchange', async () => {
-  S = decodeState(location.hash); syncControls();
-  await resolveClimate(S.lat, S.lon); render(); mapPanel.setView(S.lat, S.lon);
+  stateFromHash(); syncControls();
+  await resolveClimate(S.lat, S.lon); render(); mapPanel.setView(S.lat, S.lon); mapPanel.loadRoof(true);
 });
 window.addEventListener('beforeprint', () => Object.values(CHARTS).forEach(c => c.resize()));
 
@@ -555,7 +663,7 @@ $('method-eco').innerHTML = [
 ].map(s => `<li>${s}</li>`).join('');
 
 // ══ INIT ════════════════════════════════════════════════════════════════════
-S = decodeState(location.hash);
+stateFromHash();
 buildControls();
 syncControls();
 if (typeof Chart === 'undefined') {
