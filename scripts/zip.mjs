@@ -6,7 +6,7 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dist = fileURLToPath(new URL('../dist/', import.meta.url));
-const folder = process.argv[2] || 'iraq';
+const folder = process.argv[2] || 'solar';
 
 async function walk(dir) {
   const out = [];

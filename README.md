@@ -1,6 +1,6 @@
 # ☀️ Iraq Solar Factory Model
 
-**Live:** https://iraq-solar-model.netlify.app (Netlify) · https://alisherbaz.github.io/iraq-solar-model/ (GitHub Pages)
+**Live:** https://nebosolutions.co.uk/solar/ (main) · https://iraq-solar-model.netlify.app (Netlify) · https://alisherbaz.github.io/iraq-solar-model/ (GitHub Pages)
 
 Manual Netlify deploy (runs the unit tests first): `npx netlify-cli deploy --build --prod`
 
