@@ -1,0 +1,6 @@
+# Third-party libraries (Chart.js, Leaflet) change only on upgrade: cache for a week.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

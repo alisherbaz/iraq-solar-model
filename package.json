@@ -8,6 +8,7 @@
     "start": "node scripts/serve.mjs",
     "vendor": "node scripts/vendor.mjs",
     "climate": "node scripts/fetch-climate.mjs",
+    "package": "node scripts/package.mjs && node scripts/zip.mjs",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",

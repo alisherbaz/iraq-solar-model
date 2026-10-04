@@ -1,0 +1,34 @@
+# Iraq Solar Model — Apache settings for https://nebosolutions.co.uk/iraq/
+# Upload as /public_html/iraq/.htaccess (next to index.html).
+
+Options -Indexes
+DirectoryIndex index.html
+
+# This folder is a static app: don't let WordPress's rewrite rules handle it
+<IfModule mod_rewrite.c>
+  RewriteEngine Off
+</IfModule>
+
+# Correct types for ES modules and icons
+AddType text/javascript .js .mjs
+AddType image/svg+xml .svg
+AddDefaultCharset utf-8
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript image/svg+xml application/json
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Security headers (same policy as the Netlify deployment)
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(self)"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://server.arcgisonline.com; connect-src 'self' https://power.larc.nasa.gov https://nominatim.openstreetmap.org; base-uri 'self'; form-action 'none'; frame-ancestors 'self'"
+
+  # App files keep their names between releases, so browsers must re-check them
+  # (a quick 304 when unchanged) — otherwise visitors could get a mix of old and new files.
+  <FilesMatch "\.(html|js|css|svg)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
