@@ -37,9 +37,14 @@ export const C = {
   IFC_COVER: 0.10,
   LOAN_YRS: 20,
   BATT_C_RATE: 0.5,      // max charge/discharge power = 0.5 × capacity
-  DAY_START: 7, DAY_END: 19, // factory shift (load = full) 07:00–19:00
-  NIGHT_LOAD: 0.15,      // base load outside shift, share of daytime load
-  DIESEL_LCOE: 0.28,
+  NIGHT_LOAD: 0.15,      // base load outside shift / on closed days, share of shift load
+};
+
+// Operating pattern: full load between start and end (local time), base load otherwise.
+export const SHIFTS = {
+  day: { label: 'Day shift 07:00–19:00', start: 7, end: 19 },
+  extended: { label: 'Two shifts 06:00–22:00', start: 6, end: 22 },
+  '24h': { label: 'Continuous 24 h', start: 0, end: 24 },
 };
 
 // Daily clearness index used for the "selected day" view. 'average' = long-term monthly mean.
@@ -59,15 +64,21 @@ export const ORIENTATIONS = [
 
 export const DEFAULTS = Object.freeze({
   doy: 172, wx: 'average', pitch: 15, eff: 20, area: 5000, cov: 70, orient: 0, soiling: 5, temp: 0,
-  price: 0.10, exportTariff: 0.05, install: 950, batt: 500, battCost: 350, beff: 90, load: 800, grant: 0, loan: 5,
+  price: 0.10, dieselShare: 0, dieselCost: 0.28, exportTariff: 0.05, install: 950,
+  load: 800, shift: 'day', workDays: 6, batt: 0, battCost: 350, beff: 90,
+  dutyOn: 1, euOn: 0, grant: 0, loan: 5,
 });
+
+// Text-valued inputs and their allowed values
+export const ENUMS = { wx: Object.keys(WEATHER), shift: Object.keys(SHIFTS) };
 
 // Numeric limits [min, max, step] — used by the UI sliders and to sanitise shared URLs.
 export const LIMITS = {
-  doy: [1, 365, 1], pitch: [0, 45, 1], eff: [15, 23, 0.5], area: [500, 30000, 500], cov: [40, 90, 5],
-  soiling: [0, 20, 1], temp: [0, 20, 1], price: [0.05, 0.35, 0.01], exportTariff: [0, 0.15, 0.01],
-  install: [500, 1800, 50], batt: [0, 5000, 100], battCost: [150, 800, 10], beff: [80, 97, 1],
-  load: [50, 5000, 50], grant: [0, 60, 5], loan: [0, 15, 0.5],
+  doy: [1, 365, 1], pitch: [0, 45, 1], eff: [15, 23, 0.5], area: [10, 30000, 10], cov: [40, 90, 5],
+  soiling: [0, 20, 1], temp: [0, 20, 1], price: [0.03, 0.35, 0.01], dieselShare: [0, 100, 5],
+  dieselCost: [0.15, 0.50, 0.01], exportTariff: [0, 0.15, 0.01], install: [500, 1800, 50],
+  load: [1, 5000, 1], workDays: [5, 7, 1], batt: [0, 5000, 5], battCost: [150, 800, 10], beff: [80, 97, 1],
+  dutyOn: [0, 1, 1], euOn: [0, 1, 1], grant: [0, 60, 5], loan: [0, 15, 0.5],
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -142,9 +153,11 @@ export function monthlyKt(m) {
 }
 
 // ── system ─────────────────────────────────────────────────────────────────
+// Only whole panels can be installed — matters for small roofs (a 10 m² roof at 70% fits 4 panels).
 export function systemSize(s) {
-  const panelArea = s.area * s.cov / 100;
-  return { panelArea, kWp: panelArea * s.eff / 100, panelCount: Math.floor(panelArea / C.PANEL_M2) };
+  const panelCount = Math.floor(s.area * s.cov / 100 / C.PANEL_M2 + 1e-9);
+  const panelArea = panelCount * C.PANEL_M2;
+  return { panelArea, kWp: panelArea * s.eff / 100, panelCount };
 }
 
 // PV output for one day at C.STEP resolution. Returns hourly kWh (24 values) and stats.
@@ -170,9 +183,14 @@ export function dayGeneration(doy, kt, s, opts = {}) {
   return { hourly, total: sum(hourly), peak: Math.max(...hourly), ghi: ghiSum / 1000, poa: poaSum / 1000 };
 }
 
-export function loadProfile(load) {
-  return Array.from({ length: 24 }, (_, h) => (h >= C.DAY_START && h < C.DAY_END ? load : load * C.NIGHT_LOAD));
+export function loadProfile(load, shift = 'day', working = true) {
+  const { start, end } = SHIFTS[shift];
+  return Array.from({ length: 24 }, (_, h) => (working && h >= start && h < end ? load : load * C.NIGHT_LOAD));
 }
+
+// Value of a kWh of displaced on-site supply: blend of grid and diesel generator
+export const effectivePrice = (s, gridPrice = s.price) =>
+  gridPrice * (1 - s.dieselShare / 100) + s.dieselCost * s.dieselShare / 100;
 
 // Hourly battery dispatch: solar → load first, surplus → battery, remainder → export.
 // The day is simulated twice so the start-of-day state of charge is in steady state.
@@ -202,12 +220,17 @@ export function simulateDay(gen, demand, cap, rte) {
 }
 
 // Energy-only annual run (12 representative mean days) — used by the main model and the sweeps.
+// Working days and closed days (base load only) are simulated separately and weighted by workDays/7.
 export function annualEnergy(s, batt = s.batt) {
-  const demand = loadProfile(s.load);
+  const work = loadProfile(s.load, s.shift, true), closed = loadProfile(s.load, s.shift, false);
+  const f = s.workDays / 7;
   const months = MDAYS.map((days, m) => {
     const g = dayGeneration(midDoy(m), monthlyKt(m), s);
-    const sim = simulateDay(g.hourly, demand, batt, s.beff);
-    return { days, gen: g.total, ...sim.totals, cycles: batt > 0 ? sim.totals.discharge / batt : 0 };
+    const a = simulateDay(g.hourly, work, batt, s.beff).totals;
+    const b = f < 1 ? simulateDay(g.hourly, closed, batt, s.beff).totals : a;
+    const mix = {};
+    for (const k of Object.keys(a)) mix[k] = a[k] * f + b[k] * (1 - f);
+    return { days, ...mix, gen: g.total, cycles: batt > 0 ? mix.discharge / batt : 0 };
   });
   const yr = k => sum(months.map(x => x[k] * x.days));
   return {
@@ -219,10 +242,10 @@ export function annualEnergy(s, batt = s.batt) {
 
 export const valueOf = (e, price, tariff) => e.avoided * price + e.export * tariff;
 
-export function grantsFor(capex, pvCapex, customPct) {
-  const duty = pvCapex * C.HW_SHARE * C.DUTY_RATE;
-  const eu = Math.min(capex * C.EU_SHARE, C.EU_CAP);
-  const custom = capex * customPct / 100;
+export function grantsFor(capex, pvCapex, s) {
+  const duty = s.dutyOn ? pvCapex * C.HW_SHARE * C.DUTY_RATE : 0;
+  const eu = s.euOn ? Math.min(capex * C.EU_SHARE, C.EU_CAP) : 0;
+  const custom = capex * s.grant / 100;
   const total = Math.min(capex, duty + eu + custom);
   return { duty, eu, custom, total };
 }
@@ -249,10 +272,10 @@ const pvFactor = () => { let f = 0; for (let y = 1; y <= C.LIFE_YRS; y++) f += 1
 function economicsFor(s, e) {
   const { kWp } = systemSize(s);
   const pvCapex = kWp * s.install, battCapex = s.batt * s.battCost, capex = pvCapex + battCapex;
-  const g = grantsFor(capex, pvCapex, s.grant);
+  const g = grantsFor(capex, pvCapex, s);
   const netCapex = capex - g.total;
   const om = capex * C.OM_RATE;
-  const saving = valueOf(e, s.price, s.exportTariff);
+  const saving = valueOf(e, effectivePrice(s), s.exportTariff);
   return { pvCapex, battCapex, capex, grants: g, netCapex, om, saving, net: saving - om,
     paybackBefore: payback(capex, saving - om), paybackAfter: payback(netCapex, saving - om) };
 }
@@ -262,9 +285,10 @@ export function runModel(input) {
   const s = sanitizeState(input);
   const size = systemSize(s);
   const month = doyToMonth(s.doy);
-  const demand = loadProfile(s.load);
+  const demand = loadProfile(s.load, s.shift, true);
+  const effPrice = effectivePrice(s);
 
-  // Selected day
+  // Selected day (shown as a working day)
   const kt = WEATHER[s.wx].kt ?? monthlyKt(month);
   const day = dayGeneration(s.doy, kt, s);
   const daySim = simulateDay(day.hourly, demand, s.batt, s.beff);
@@ -287,19 +311,19 @@ export function runModel(input) {
   // Finance
   const loanAmt = eco.netCapex;
   const loanPayment = annuity(loanAmt, s.loan / 100, C.LOAN_YRS);
-  const avoidedPerPrice = p => valueOf(e, p, s.exportTariff);
+  // Price sensitivity relative to the current (blended) electricity value
   const npv = {
-    low: npvSeries(eco.netCapex, avoidedPerPrice(0.07), eco.om),
+    low: npvSeries(eco.netCapex, valueOf(e, effPrice * 0.7, s.exportTariff), eco.om),
     mid: npvSeries(eco.netCapex, eco.saving, eco.om),
-    high: npvSeries(eco.netCapex, avoidedPerPrice(0.20), eco.om),
+    high: npvSeries(eco.netCapex, valueOf(e, effPrice * 1.5, s.exportTariff), eco.om),
   };
   const dE = discountedEnergy(e.gen), pf = pvFactor();
-  const pvGrants = grantsFor(eco.pvCapex, eco.pvCapex, s.grant).total;
+  const pvGrants = grantsFor(eco.pvCapex, eco.pvCapex, s).total;
   const lcoe = {
     solar: (eco.pvCapex * (1 + C.OM_RATE * pf)) / dE,
     solarBatt: (eco.capex * (1 + C.OM_RATE * pf)) / dE,
     grid: s.price,
-    diesel: C.DIESEL_LCOE,
+    diesel: s.dieselCost,
     solarGrants: (eco.pvCapex - pvGrants + eco.pvCapex * C.OM_RATE * pf) / dE,
   };
 
@@ -319,7 +343,7 @@ export function runModel(input) {
   const orientSweep = orientRaw.map(o => ({ ...o, pct: o.kwh / orientMax * 100 }));
 
   return {
-    state: s, size, month,
+    state: s, size, month, effPrice,
     day: { kt, hourly: day.hourly, total: day.total, peak: day.peak, sim: daySim },
     annual: {
       genKwh: e.gen, loadKwh: e.load, exportKwh: e.export, importKwh: e.import, avoidedKwh: e.avoided,
@@ -345,16 +369,18 @@ export function yearDaily(s) {
 }
 
 // ── state (URL sharing) ────────────────────────────────────────────────────
+const INT_KEYS = new Set(['doy', 'workDays', 'dutyOn', 'euOn']);
+
 export function sanitizeState(input = {}) {
   const s = { ...DEFAULTS };
   for (const [k, v] of Object.entries(input)) {
     if (!(k in DEFAULTS)) continue;
-    if (k === 'wx') { if (v in WEATHER) s.wx = v; continue; }
+    if (k in ENUMS) { if (ENUMS[k].includes(v)) s[k] = v; continue; }
     const n = Number(v);
-    if (!Number.isFinite(n)) continue;
+    if (v === '' || v === null || !Number.isFinite(n)) continue;
     if (k === 'orient') { if (ORIENTATIONS.some(o => o.v === n)) s.orient = n; continue; }
     const [lo, hi] = LIMITS[k];
-    s[k] = clamp(n, lo, hi);
+    s[k] = clamp(INT_KEYS.has(k) ? Math.round(n) : n, lo, hi);
   }
   return s;
 }

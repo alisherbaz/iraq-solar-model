@@ -66,9 +66,38 @@ test('changing panel area updates capacity and annual output', async ({ page }, 
   await openInputs(page, testInfo);
   const before = await num(metric(page, 'annual'));
   await setInput(page, 'area', 10000);
-  await expect(page.locator('#v-area')).toHaveText('10,000 m²');
+  await expect(page.locator('#num-area')).toHaveValue('10000');
   expect(await num(metric(page, 'kwp'))).toBe(1400);
   expect(await num(metric(page, 'annual'))).toBeCloseTo(before * 2, -1);
+});
+
+test('a 10 m² roof can be typed in and shows decimals, not "1 kWp"', async ({ page }, testInfo) => {
+  await load(page);
+  await openInputs(page, testInfo);
+  const box = page.locator('#num-area');
+  await box.fill('10');
+  await box.blur();
+  await expect(page.locator('#in-area')).toHaveValue('10');
+  await expect(metric(page, 'kwp')).toHaveText('1.4');
+  await expect(metric(page, 'panels')).toHaveText('4');
+  expect(await num(metric(page, 'annual'))).toBeGreaterThan(1);
+  // Below the minimum is clamped back to 10 when the box loses focus
+  await box.fill('3');
+  await box.blur();
+  await expect(box).toHaveValue('10');
+});
+
+test('diesel share and EU grant toggle shorten payback', async ({ page }, testInfo) => {
+  await load(page);
+  await openInputs(page, testInfo);
+  const base = await num(metric(page, 'payback'));
+  await setInput(page, 'dieselShare', 50);
+  const diesel = await num(metric(page, 'payback'));
+  expect(diesel).toBeLessThan(base);
+  await page.locator('#in-euOn').check();
+  await page.waitForFunction(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))));
+  expect(await num(metric(page, 'payback'))).toBeLessThan(diesel);
+  await expect(page).toHaveURL(/euOn=1/);
 });
 
 test('south-facing panels beat north-facing (orientation regression)', async ({ page }, testInfo) => {

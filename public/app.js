@@ -1,12 +1,14 @@
 import {
-  C, MN, MDAYS, DEFAULTS, LIMITS, WEATHER, ORIENTATIONS,
-  runModel, yearDaily, systemSize, loadProfile, encodeState, decodeState, monthlyCsv,
+  C, MN, MDAYS, DEFAULTS, LIMITS, ENUMS, WEATHER, SHIFTS, ORIENTATIONS,
+  runModel, yearDaily, systemSize, loadProfile, encodeState, decodeState, monthlyCsv, clamp,
 } from './model.js';
 
 const $ = id => document.getElementById(id);
 const fmt = (n, dec = 0) => (n == null || !Number.isFinite(n) ? '—'
   : Number(n).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }));
-const money = n => (Math.abs(n) >= 1e6 ? '$' + fmt(n / 1e6, 2) + 'M' : '$' + fmt(n, 0));
+// Adaptive precision so small systems (e.g. 1.4 kWp on a 10 m² roof) don't round to "1"
+const sig = n => fmt(n, Math.abs(n) >= 100 ? 0 : Math.abs(n) >= 1 ? 1 : 2);
+const money = n => (Math.abs(n) >= 1e6 ? '$' + fmt(n / 1e6, 2) + 'M' : '$' + fmt(n, Math.abs(n) < 100 && n !== 0 ? 2 : 0));
 const yrs = n => (!Number.isFinite(n) || n > 30 ? '30+' : fmt(n, 1));
 const fmtDate = doy => new Date(2025, 0, doy).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 
@@ -19,20 +21,27 @@ const CONTROLS = [
   { key: 'pitch', label: 'Panel tilt', fmt: v => v + '°' },
   { key: 'orient', label: 'Orientation (facing)', options: ORIENTATIONS },
   { key: 'eff', label: 'Panel efficiency', fmt: v => v.toFixed(1) + '%' },
-  { key: 'area', label: 'Total roof area', fmt: v => fmt(v) + ' m²' },
+  { key: 'area', label: 'Total roof area', num: 'm²' },
   { key: 'cov', label: 'Panel coverage', fmt: v => v + '%' },
   { key: 'soiling', label: 'Dust / soiling loss', fmt: v => v + '%', hint: 'Iraq: 3–8% with regular cleaning, 15%+ without' },
   { key: 'temp', label: 'Extra derating', fmt: v => (v === 0 ? 'None' : v + '%'), hint: 'On top of the modelled temperature loss' },
-  { sect: 'Economics' },
+  { sect: 'Factory load' },
+  { key: 'load', label: 'Load during operating hours', num: 'kW' },
+  { key: 'shift', label: 'Operating hours', options: Object.entries(SHIFTS).map(([v, s]) => ({ v, label: s.label })) },
+  { key: 'workDays', label: 'Operating days per week', fmt: v => v + ' days', hint: 'Closed days run at 15% base load' },
+  { sect: 'Energy prices' },
   { key: 'price', label: 'Grid electricity price', fmt: v => '$' + v.toFixed(2) + '/kWh' },
+  { key: 'dieselShare', label: 'Load on diesel generator', fmt: v => v + '%', hint: 'Share of consumption supplied by generators during grid outages' },
+  { key: 'dieselCost', label: 'Diesel generation cost', fmt: v => '$' + v.toFixed(2) + '/kWh' },
   { key: 'exportTariff', label: 'Export credit', fmt: v => '$' + v.toFixed(2) + '/kWh' },
   { key: 'install', label: 'PV install cost', fmt: v => '$' + v + '/kWp' },
-  { sect: 'Factory load & battery' },
-  { key: 'load', label: 'Factory load (shift hours)', fmt: v => fmt(v) + ' kW' },
-  { key: 'batt', label: 'Battery capacity', fmt: v => fmt(v) + ' kWh' },
+  { sect: 'Battery storage' },
+  { key: 'batt', label: 'Battery capacity', num: 'kWh' },
   { key: 'battCost', label: 'Battery cost', fmt: v => '$' + v + '/kWh' },
   { key: 'beff', label: 'Round-trip efficiency', fmt: v => v + '%' },
   { sect: 'Grants & finance' },
+  { key: 'dutyOn', label: 'Import duty exemption (15% on hardware)', check: true },
+  { key: 'euOn', label: 'EU co-finance (20%, max $300k) — unconfirmed', check: true },
   { key: 'grant', label: 'Custom grant / subsidy', fmt: v => v + '%' },
   { key: 'loan', label: 'Soft-loan interest rate', fmt: v => v.toFixed(1) + '%' },
 ];
@@ -44,7 +53,12 @@ function buildControls() {
   root.innerHTML = CONTROLS.map(c => {
     if (c.sect) return `<div class="sect">${c.sect}</div>`;
     const id = 'in-' + c.key;
-    const head = `<div class="fl"><label for="${id}">${c.label}</label>${c.fmt ? `<span class="fv" id="v-${c.key}"></span>` : ''}</div>`;
+    if (c.check) return `<div class="fld"><label class="chk"><input type="checkbox" id="${id}" data-key="${c.key}"> ${c.label}</label></div>`;
+    const [lo, hi] = LIMITS[c.key] || [];
+    const value = c.num
+      ? `<span class="fv"><input type="number" class="num" id="num-${c.key}" data-key="${c.key}" min="${lo}" max="${hi}" step="any" inputmode="decimal" aria-label="${c.label} (${c.num})"> ${c.num}</span>`
+      : c.fmt ? `<span class="fv" id="v-${c.key}"></span>` : '';
+    const head = `<div class="fl"><label for="${id}">${c.label}</label>${value}</div>`;
     const input = c.options
       ? `<select id="${id}" data-key="${c.key}">${c.options.map(o => `<option value="${o.v}">${o.label}</option>`).join('')}</select>`
       : `<input type="range" id="${id}" data-key="${c.key}" min="${LIMITS[c.key][0]}" max="${LIMITS[c.key][1]}" step="${LIMITS[c.key][2]}"${c.hint ? ` title="${c.hint}"` : ''}>`;
@@ -55,15 +69,35 @@ function buildControls() {
 }
 
 function onInput(e) {
-  const k = e.target.dataset.key;
+  const el = e.target, k = el.dataset.key;
   if (!k) return;
-  S[k] = k === 'wx' ? e.target.value : +e.target.value;
-  syncLabels();
+  let v;
+  if (el.type === 'checkbox') v = el.checked ? 1 : 0;
+  else if (k in ENUMS) v = el.value;
+  else {
+    v = parseFloat(el.value);
+    if (!Number.isFinite(v)) { if (e.type === 'change') syncControls(); return; } // empty box: restore on blur
+    if (LIMITS[k]) {                            // orientation is a fixed option list, no range
+      const [lo, hi] = LIMITS[k];
+      if (el.type === 'number' && e.type === 'input' && (v < lo || v > hi)) return; // wait for blur to clamp
+      v = clamp(v, lo, hi);
+    }
+  }
+  S[k] = v;
+  // Don't rewrite the number box the user is typing in; do clamp it once they leave it
+  syncControls(el.type === 'number' && e.type === 'input' ? el : null);
   scheduleRender();
 }
 
-function syncControls() {
-  for (const c of CONTROLS) if (c.key) $('in-' + c.key).value = S[c.key];
+function syncControls(skip = null) {
+  for (const c of CONTROLS) {
+    if (!c.key) continue;
+    const el = $('in-' + c.key);
+    if (c.check) el.checked = !!S[c.key];
+    else if (el !== skip) el.value = S[c.key];
+    const num = c.num && $('num-' + c.key);
+    if (num && num !== skip) num.value = S[c.key];
+  }
   syncLabels();
 }
 function syncLabels() {
@@ -158,51 +192,55 @@ function render() {
   const { annual: a, economics: e, day } = r;
   history.replaceState(null, '', location.pathname + location.search + (encodeState(S) ? '#' + encodeState(S) : ''));
 
-  text('annualbadge', `Annual: ${fmt(a.genKwh / 1000, 0)} MWh`);
-  metric('daily', fmt(day.total));
-  metric('peak', fmt(day.peak, 0));
-  metric('kwp', fmt(r.size.kWp));
-  metric('annual', fmt(a.genKwh / 1000, 0));
-  metric('savings', fmt(e.saving));
-  metric('co2', fmt(a.co2t, 0));
+  const mwh = a.genKwh / 1000;
+  text('annualbadge', `Annual: ${sig(mwh)} MWh`);
+  metric('daily', sig(day.total));
+  metric('peak', sig(day.peak));
+  metric('kwp', sig(r.size.kWp));
+  metric('annual', sig(mwh));
+  metric('savings', e.saving < 100 ? fmt(e.saving, 2) : fmt(e.saving));
+  metric('co2', sig(a.co2t));
   metric('panels', fmt(r.size.panelCount));
   metric('sf', fmt(a.solarFraction, 1));
-  metric('export', fmt(a.exportKwh / 1000, 1));
+  metric('export', sig(a.exportKwh / 1000));
   metric('payback', yrs(e.paybackAfter));
-  $('sheet-summary').innerHTML = `<b>${fmt(a.genKwh / 1000, 0)}</b> MWh/yr · <b>${money(e.saving)}</b>/yr · payback <b>${yrs(e.paybackAfter)}</b> yrs`;
+  $('sheet-summary').innerHTML = `<b>${sig(mwh)}</b> MWh/yr · <b>${money(e.saving)}</b>/yr · payback <b>${yrs(e.paybackAfter)}</b> yrs`;
 
   // Generation
-  text('dlbl', `${fmtDate(S.doy)} · ${WEATHER[S.wx].label}`);
-  text('ytot', `Total ${fmt(a.genKwh / 1000, 0)} MWh/yr · ${fmt(a.specificYield)} kWh/kWp`);
-  setData('c1', loadProfile(S.load), day.hourly.map(v => +v.toFixed(1)));
-  setData('c2', r.monthly.map(m => +(m.genKwh / 1000).toFixed(1)));
+  text('dlbl', `${fmtDate(S.doy)} · ${WEATHER[S.wx].label} · operating day`);
+  text('ytot', `Total ${sig(mwh)} MWh/yr · ${fmt(a.specificYield)} kWh/kWp`);
+  const r2 = arr => arr.map(v => +v.toFixed(2));
+  setData('c1', loadProfile(S.load, S.shift), r2(day.hourly));
+  setData('c2', r.monthly.map(m => +(m.genKwh / 1000).toFixed(3)));
   renderHeatmap();
   renderRoof();
 
   // Battery
   const sim = day.sim;
-  text('battdate', fmtDate(S.doy));
-  text('bv1', fmt(sim.totals.gen - sim.totals.export, 0));
-  text('bv2', fmt(sim.totals.export, 0));
+  text('battdate', fmtDate(S.doy) + ' · operating day');
+  text('bv1', sig(sim.totals.gen - sim.totals.export));
+  text('bv2', sig(sim.totals.export));
   text('bv3', fmt(a.battCycles, 0));
-  const r1 = a => a.map(v => +v.toFixed(1));
+  const r1 = r2;
   setData('cb1', r1(sim.direct), r1(sim.discharge), r1(sim.import), r1(sim.charge), r1(sim.export));
   setData('cb2', r.monthly.map(m => +m.selfConsumption.toFixed(1)), r.monthly.map(m => +m.solarFraction.toFixed(1)));
   setData('cb3', r1(sim.soc));
   text('bve1', money(e.battExtraSaving));
   text('bve2', money(e.battCapex));
   text('bve3', S.batt === 0 ? '—' : yrs(e.battPayback));
+  const surplusPct = a.genKwh > 0 ? a.exportKwh / a.genKwh * 100 : 0;
   text('batt-note', S.batt === 0
-    ? 'No battery selected.'
+    ? `No battery selected. ${fmt(surplusPct, 0)}% of solar output is currently exported${surplusPct > 10 ? ' — try adding a battery to store it.' : ', so a battery would add little value.'}`
     : e.battExtraSaving < e.battCapex * C.OM_RATE
-      ? 'Solar output rarely exceeds the factory load at these settings, so there is little surplus to store. Increase coverage/area or reduce load to see battery value.'
-      : `Battery value comes from shifting surplus solar (otherwise exported at $${S.exportTariff.toFixed(2)}) to cover load at $${S.price.toFixed(2)}/kWh. Max charge/discharge 0.5C.`);
+      ? 'Solar output rarely exceeds the factory load at these settings, so there is little surplus to store. Increase roof area/coverage or reduce load to see battery value.'
+      : `Battery value comes from shifting surplus solar (otherwise exported at $${S.exportTariff.toFixed(2)}) to cover load worth $${r.effPrice.toFixed(2)}/kWh. Max charge/discharge 0.5C.`);
 
   // Optimisation
   const cov = r.sweeps.cov, best = r.sweeps.bestCov;
   const covLbl = cov.map(c => c.cov + '%');
-  CHARTS.co1.data.labels = covLbl; setData('co1', cov.map(c => +c.co2t.toFixed(0)));
-  CHARTS.co2c.data.labels = covLbl; setData('co2c', cov.map(c => Math.round(c.saving)));
+  const p4 = v => +v.toPrecision(4); // chart values readable for both 10 m² and 30,000 m² roofs
+  CHARTS.co1.data.labels = covLbl; setData('co1', cov.map(c => p4(c.co2t)));
+  CHARTS.co2c.data.labels = covLbl; setData('co2c', cov.map(c => p4(c.saving)));
   const ds3 = CHARTS.co3.data.datasets[0];
   CHARTS.co3.data.labels = covLbl;
   ds3.pointRadius = cov.map(c => (c.cov === best ? 6 : c.cov === S.cov ? 4 : 2));
@@ -212,19 +250,19 @@ function render() {
   const tilt = r.sweeps.tilt, bestT = tilt.reduce((x, y) => (y.mwh > x.mwh ? y : x));
   CHARTS.co4.data.labels = tilt.map(t => t.tilt + '°');
   CHARTS.co4.data.datasets[0].pointRadius = tilt.map(t => (Math.abs(t.tilt - S.pitch) < 1.25 ? 6 : 0));
-  setData('co4', tilt.map(t => +t.mwh.toFixed(0)));
-  text('tiltbest', `Best ≈ ${bestT.tilt}° (${fmt(bestT.mwh)} MWh)`);
+  setData('co4', tilt.map(t => p4(t.mwh)));
+  text('tiltbest', `Best ≈ ${bestT.tilt}° (${sig(bestT.mwh)} MWh)`);
   CHARTS.co5.data.labels = r.sweeps.orient.map(o => o.label);
   setData('co5', r.sweeps.orient.map(o => +o.pct.toFixed(1)));
   const withT = r.monthly.map(m => m.genKwh / 1000), noT = r.noTempMonthly.map(v => v / 1000);
   const lost = 1 - withT.reduce((x, y) => x + y) / noT.reduce((x, y) => x + y);
-  setData('co6', withT.map(v => +v.toFixed(1)), noT.map(v => +v.toFixed(1)));
+  setData('co6', withT.map(p4), noT.map(p4));
   text('templost', `${fmt(lost * 100, 1)}% of annual output lost to heat`);
 
   // Financing
   const g = e.grants;
-  text('g1val', money(g.duty) + ' saved');
-  text('g4val', money(g.eu));
+  text('g1val', S.dutyOn ? money(g.duty) + ' saved' : 'not applied');
+  text('g4val', S.euOn ? money(g.eu) : 'not applied');
   text('g5val', money(g.custom));
   text('gtotal', money(g.total));
   text('g2val', 'up to ' + money(e.wbEligible));
@@ -239,7 +277,11 @@ function render() {
   $('fs5').className = 'v ' + (e.cashflow >= 0 ? 'c-green' : 'c-red');
   text('fs6', money(e.npv25));
   setData('lcoe', [r.lcoe.solar, r.lcoe.solarBatt, r.lcoe.solarGrants, r.lcoe.grid, r.lcoe.diesel].map(v => +v.toFixed(4)));
-  setData('npv', r.npv.low.map(Math.round), r.npv.mid.map(Math.round), r.npv.high.map(Math.round));
+  const npvDs = CHARTS.npv.data.datasets, ep = r.effPrice;
+  npvDs[0].label = `Price −30% ($${(ep * 0.7).toFixed(3)})`;
+  npvDs[1].label = `Current ($${ep.toFixed(3)}/kWh${S.dieselShare ? ' blended' : ''})`;
+  npvDs[2].label = `Price +50% ($${(ep * 1.5).toFixed(3)})`;
+  setData('npv', r.npv.low.map(p4), r.npv.mid.map(p4), r.npv.high.map(p4));
 
   document.body.dataset.ready = '1';
 }
@@ -284,7 +326,10 @@ function renderRoof() {
   const rw = 380, rh = 148, rx = 18, ry = 11, pw = 16, ph = 9, gap = 2.5;
   const { panelArea, panelCount } = systemSize(S);
   const cols = Math.floor((rw - 12) / (pw + gap)), rows = Math.floor((rh - 20) / (ph + gap));
-  const total = cols * rows, filled = Math.round(total * cov / 100);
+  // Large roofs: each cell is a block of panels. Small roofs: draw the actual panel slots.
+  const slots = Math.floor(area / C.PANEL_M2);
+  const total = Math.min(cols * rows, slots);
+  const filled = slots <= cols * rows ? panelCount : Math.round(total * cov / 100);
   const cx = rx + rw + 80, cy = ry + rh / 2, cR = 30;
   // Screen: north = up, east = right. Azimuth convention: 0 = south, +west.
   const a = (90 + orient) * Math.PI / 180;   // 0 → pointing down (south)
@@ -305,7 +350,7 @@ function renderRoof() {
   out += `<circle cx="${cx}" cy="${cy}" r="2.5" fill="#e85020"/>`;
   out += `<text x="${cx}" y="${ry + rh + 6}" font-size="9" text-anchor="middle" fill="var(--text3)">panels face</text>`;
   $('rsvg').innerHTML = out;
-  text('roofstats', `${fmt(panelArea)} m² covered · ${fmt(panelCount)} panels · tilt ${pitch}°`);
+  text('roofstats', `${fmt(panelArea, panelArea < 100 ? 1 : 0)} m² covered · ${fmt(panelCount)} panels · tilt ${pitch}°${slots > cols * rows ? ' · not to scale' : ''}`);
 }
 
 // ══ TABS ════════════════════════════════════════════════════════════════════
@@ -377,9 +422,11 @@ $('method-losses').innerHTML = [
   `Panel degradation: ${C.DEGRADATION * 100}%/yr (economics only)`,
 ].map(s => `<li>${s}</li>`).join('');
 $('method-eco').innerHTML = [
-  'Savings = (factory load no longer bought from the grid) × grid price + exported kWh × export credit',
+  'Savings = (load no longer bought) × blended price + exported kWh × export credit. The blended price mixes the grid price and diesel generation cost by the share of load on the generator',
+  'Only whole panels are counted (1.75 m² each), so small roofs are sized realistically',
   `O&M ${C.OM_RATE * 100}% of capex per year; ${C.LIFE_YRS}-year life; ${C.DISC_RATE * 100}% discount rate for NPV and LCOE`,
-  `Grants modelled: import-duty saving (${C.DUTY_RATE * 100}% on the ${C.HW_SHARE * 100}% hardware share of PV cost), EU co-finance (${C.EU_SHARE * 100}%, max $${fmt(C.EU_CAP)}), custom %`,
+  `Grants (each can be switched on/off): import-duty saving (${C.DUTY_RATE * 100}% on the ${C.HW_SHARE * 100}% hardware share of PV cost, on by default), EU co-finance (${C.EU_SHARE * 100}%, max $${fmt(C.EU_CAP)}, off by default as it is not guaranteed), custom %`,
+  'NPV price sensitivity: −30% and +50% around the current blended electricity price',
   `Loan: annuity over ${C.LOAN_YRS} years on the net cost after grants, at the soft-loan rate`,
   `CO₂ factor ${C.CO2_KG_PER_KWH} kg/kWh (Iraq grid)`,
 ].map(s => `<li>${s}</li>`).join('');

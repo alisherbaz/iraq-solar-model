@@ -200,6 +200,80 @@ describe('economics', () => {
   });
 });
 
+describe('user-facing scenario logic', () => {
+  const run = over => M.runModel({ ...M.DEFAULTS, ...over });
+
+  test('minimum roof area is 10 m² and gives whole panels only', () => {
+    assert.equal(M.LIMITS.area[0], 10);
+    const r = run({ area: 10 });
+    assert.equal(r.size.panelCount, 4);                       // 10 m² × 70% = 7 m² = 4 × 1.75 m²
+    near(r.size.kWp, 4 * M.C.PANEL_M2 * 0.20, 1e-9);
+    assert.ok(r.annual.genKwh > 1000 && r.annual.genKwh < 4000, `10 m² → ${r.annual.genKwh} kWh`);
+    assert.equal(M.sanitizeState({ area: 3 }).area, 10);
+  });
+
+  test('installed panel area never exceeds roof × coverage', () => {
+    for (const area of [10, 17, 333, 5000, 29990]) for (const cov of [40, 65, 90]) {
+      const sz = M.systemSize({ ...M.DEFAULTS, area, cov });
+      assert.ok(sz.panelArea <= area * cov / 100 + 1e-9);
+      assert.ok(area * cov / 100 - sz.panelArea < M.C.PANEL_M2);
+    }
+  });
+
+  test('default scenario has no battery and no unconfirmed EU grant', () => {
+    assert.equal(M.DEFAULTS.batt, 0);
+    assert.equal(M.DEFAULTS.euOn, 0);
+    assert.equal(base.economics.grants.eu, 0);
+    assert.equal(base.economics.battCapex, 0);
+  });
+
+  test('grant toggles switch individual programmes on and off', () => {
+    assert.equal(run({ dutyOn: 0 }).economics.grants.duty, 0);
+    assert.ok(run({ euOn: 1 }).economics.grants.eu > 0);
+    assert.ok(run({ euOn: 1 }).economics.paybackAfter < base.economics.paybackAfter);
+  });
+
+  test('closing on some days lowers savings when solar would otherwise be used', () => {
+    assert.ok(run({ workDays: 5 }).economics.saving < run({ workDays: 7 }).economics.saving);
+    assert.ok(run({ workDays: 5 }).annual.exportKwh > run({ workDays: 7 }).annual.exportKwh);
+  });
+
+  test('longer operating hours raise load and never raise export', () => {
+    const day = run({ area: 20000 }), ext = run({ area: 20000, shift: 'extended' }), h24 = run({ area: 20000, shift: '24h' });
+    assert.ok(ext.annual.loadKwh > day.annual.loadKwh && h24.annual.loadKwh > ext.annual.loadKwh);
+    assert.ok(ext.annual.exportKwh <= day.annual.exportKwh + 1e-6);
+  });
+
+  test('displacing diesel is worth more than displacing grid power', () => {
+    const d = run({ dieselShare: 50 });
+    assert.ok(d.economics.saving > base.economics.saving * 1.5);
+    near(d.effPrice, 0.5 * 0.10 + 0.5 * 0.28, 1e-12);
+    assert.ok(d.economics.paybackAfter < base.economics.paybackAfter);
+  });
+
+  test('NPV sensitivity brackets the current price at any price level', () => {
+    for (const price of [0.03, 0.10, 0.35]) {
+      const r = run({ price });
+      assert.ok(r.npv.low[25] < r.npv.mid[25] && r.npv.mid[25] < r.npv.high[25], `price ${price}`);
+    }
+  });
+
+  test('a tiny battery on a tiny system behaves (no NaN, balance holds)', () => {
+    const r = run({ area: 10, load: 1, batt: 5 });
+    assert.ok(Number.isFinite(r.economics.battExtraSaving) && r.economics.battExtraSaving >= 0);
+    assert.ok(r.annual.solarFraction > 0 && r.annual.solarFraction <= 100);
+  });
+
+  test('decode accepts new keys and rejects bad enum values', () => {
+    const s = M.decodeState('#shift=24h&workDays=5.6&euOn=7&dieselShare=40');
+    assert.equal(s.shift, '24h');
+    assert.equal(s.workDays, 6);
+    assert.equal(s.euOn, 1);
+    assert.equal(s.dieselShare, 40);
+    assert.equal(M.decodeState('#shift=night').shift, 'day');
+  });
+});
+
 describe('model robustness', () => {
   test('every slider at its min and max produces finite results', () => {
     for (const [k, [lo, hi]] of Object.entries(M.LIMITS)) {
@@ -212,10 +286,11 @@ describe('model robustness', () => {
     }
   });
 
-  test('every orientation and weather option runs', () => {
+  test('every orientation, weather and shift option runs', () => {
     for (const o of M.ORIENTATIONS) for (const wx of Object.keys(M.WEATHER)) {
       assert.ok(Number.isFinite(M.runModel({ ...M.DEFAULTS, orient: o.v, wx }).day.total));
     }
+    for (const shift of Object.keys(M.SHIFTS)) assert.ok(Number.isFinite(M.runModel({ ...M.DEFAULTS, shift }).economics.saving));
   });
 
   test('full model runs fast enough for live slider updates (< 150 ms)', () => {
@@ -244,7 +319,7 @@ describe('state sharing', () => {
   test('decode clamps out-of-range and ignores junk', () => {
     const s = M.decodeState('#pitch=999&area=-5&wx=hacked&orient=17&foo=bar&eff=abc');
     assert.equal(s.pitch, 45);
-    assert.equal(s.area, 500);
+    assert.equal(s.area, 10);
     assert.equal(s.wx, M.DEFAULTS.wx);
     assert.equal(s.orient, M.DEFAULTS.orient);
     assert.equal(s.eff, M.DEFAULTS.eff);

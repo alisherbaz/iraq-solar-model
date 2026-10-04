@@ -159,12 +159,12 @@
           <p class="note warn">⚠ Programme names, eligibility and amounts are indicative planning estimates and have not been verified. Confirm current terms directly with each institution before relying on them.</p>
           <div class="grant-item">
             <div><div class="grant-name">Import duty / VAT exemption on renewable equipment</div>
-              <div class="grant-desc">Modelled as 15% duty saved on PV hardware (~60% of install cost).</div></div>
+              <div class="grant-desc">Modelled as 15% duty saved on PV hardware (~60% of install cost). Can be switched off in the inputs.</div></div>
             <div class="grant-val" id="g1val">—</div>
           </div>
           <div class="grant-item">
             <div><div class="grant-name">EU co-financing (agri-food / clean energy)</div>
-              <div class="grant-desc">Modelled as 20% of capex, capped at $300k.</div></div>
+              <div class="grant-desc">Modelled as 20% of capex, capped at $300k. Off by default because it isn't guaranteed — switch it on under Grants &amp; finance if awarded.</div></div>
             <div class="grant-val" id="g4val">—</div>
           </div>
           <div class="grant-item">
@@ -232,7 +232,7 @@
           <h3>Losses</h3>
           <ul id="method-losses"></ul>
           <h3>Battery &amp; load</h3>
-          <p>The factory draws the set load during the 07:00–19:00 shift and 15% of it overnight. Solar serves the load first, then charges the battery (max 0.5C), and the remainder is exported. The battery discharges into the load whenever solar falls short. Round-trip losses are split equally between charging and discharging. Each day is simulated twice so the state of charge reaches a steady state.</p>
+          <p>The factory draws the set load during its operating hours (day shift, two shifts or 24 h) and 15% of it at other times. On closed days (e.g. Fridays) it draws only that 15% base load all day, so more solar is exported. Solar serves the load first, then charges the battery (max 0.5C), and the remainder is exported. The battery discharges into the load whenever solar falls short. Round-trip losses are split equally between charging and discharging. Each day is simulated twice so the state of charge reaches a steady state.</p>
           <h3>Economics</h3>
           <ul id="method-eco"></ul>
           <p class="note">This is a screening-level model for early feasibility. Before investing, validate with a site-specific PVGIS / PVsyst study and confirmed quotes.</p>
