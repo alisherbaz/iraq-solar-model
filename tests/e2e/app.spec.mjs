@@ -8,7 +8,7 @@ async function load(page, hash = '') {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => m.type() === 'error' && errors.push(m.text()));
-  await page.goto('/' + hash);
+  await page.goto('./' + hash); // relative, so it works when the site is served from a sub-path (GitHub Pages)
   await expect(page.locator('body[data-ready="1"]')).toBeAttached();
   return errors;
 }

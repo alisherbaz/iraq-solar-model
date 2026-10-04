@@ -1,5 +1,7 @@
 # ☀️ Iraq Solar Factory Model
 
+**Live:** https://alisherbaz.github.io/iraq-solar-model/
+
 An interactive, mobile-friendly model of rooftop solar PV, battery storage and project financing for a factory in Baghdad, Iraq. It's a static site with no build step and no backend.
 
 **Tabs:** Generation · Battery · Optimisation (coverage, tilt, orientation, heat) · Financing (grants, LCOE, NPV) · Method
@@ -26,6 +28,7 @@ The first time you run the E2E tests, install the browser with `npx playwright i
 
 ### Tests on every redeploy
 
+- **GitHub Pages** (`.github/workflows/pages.yml`) deploys `public/` on every push to `main`, but only after the unit and E2E tests pass.
 - **Netlify** runs `npm run test:unit` as its build command (`netlify.toml`). If a test fails, the deploy aborts and the previous version stays live.
 - **GitHub Actions** (`.github/workflows/ci.yml`) runs the unit tests and the full desktop + mobile E2E suite on every push and pull request. You can also start the workflow manually with a `base_url` to smoke-test the live site.
 

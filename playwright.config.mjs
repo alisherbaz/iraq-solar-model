@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 // BASE_URL lets the same suite run against a deployed site, e.g.
 //   BASE_URL=https://your-site.netlify.app npm run test:e2e
-const BASE_URL = process.env.BASE_URL;
+const BASE_URL = process.env.BASE_URL && process.env.BASE_URL.replace(/\/?$/, '/');
 const PORT = 5180;
 
 export default defineConfig({
