@@ -1,7 +1,9 @@
 import {
-  C, MN, MDAYS, DEFAULTS, LIMITS, ENUMS, WEATHER, SHIFTS, ORIENTATIONS,
+  C, MN, MDAYS, DEFAULTS, LIMITS, ENUMS, WEATHER, SHIFTS, BUILDINGS, PRESETS, CITIES, DEFAULT_CLIMATE,
   runModel, yearDaily, systemSize, loadProfile, encodeState, decodeState, monthlyCsv, clamp,
 } from './model.js';
+import { azimuthLabel, nearestCity, haversine, powerUrl, parsePower } from './geo.js';
+import { createMapPanel } from './map.js';
 
 const $ = id => document.getElementById(id);
 const fmt = (n, dec = 0) => (n == null || !Number.isFinite(n) ? '—'
@@ -14,21 +16,26 @@ const fmtDate = doy => new Date(2025, 0, doy).toLocaleDateString('en-US', { day:
 
 // ══ CONTROLS SPEC ═══════════════════════════════════════════════════════════
 const CONTROLS = [
+  { sect: 'Building & location' },
+  { key: 'building', label: 'Building type', options: Object.entries(BUILDINGS).map(([v, label]) => ({ v, label })) },
+  { custom: 'location' },
   { sect: 'Selected day' },
   { key: 'doy', label: 'Day of year', fmt: v => `${v} · ${fmtDate(v)}` },
   { key: 'wx', label: 'Weather (selected day only)', options: Object.entries(WEATHER).map(([v, w]) => ({ v, label: w.label })) },
   { sect: 'Roof & panels' },
-  { key: 'pitch', label: 'Panel tilt', fmt: v => v + '°' },
-  { key: 'orient', label: 'Orientation (facing)', options: ORIENTATIONS },
-  { key: 'eff', label: 'Panel efficiency', fmt: v => v.toFixed(1) + '%' },
   { key: 'area', label: 'Total roof area', num: 'm²' },
-  { key: 'cov', label: 'Panel coverage', fmt: v => v + '%' },
+  { key: 'orient', label: 'Panels face', fmt: v => azimuthLabel(v), hint: 'Compass direction the panels face. South is best in Iraq.' },
+  { key: 'pitch', label: 'Panel tilt', fmt: v => v + '°' },
+  { key: 'eff', label: 'Panel efficiency', fmt: v => v.toFixed(1) + '%' },
+  { key: 'cov', label: 'Panel coverage', fmt: v => v + '%', hint: 'Share of the roof covered by panels. Flat roofs with tilted racks: 30–50%' },
   { key: 'soiling', label: 'Dust / soiling loss', fmt: v => v + '%', hint: 'Iraq: 3–8% with regular cleaning, 15%+ without' },
   { key: 'temp', label: 'Extra derating', fmt: v => (v === 0 ? 'None' : v + '%'), hint: 'On top of the modelled temperature loss' },
-  { sect: 'Factory load' },
-  { key: 'load', label: 'Load during operating hours', num: 'kW' },
-  { key: 'shift', label: 'Operating hours', options: Object.entries(SHIFTS).map(([v, s]) => ({ v, label: s.label })) },
-  { key: 'workDays', label: 'Operating days per week', fmt: v => v + ' days', hint: 'Closed days run at 15% base load' },
+  { sect: 'Electricity use', only: 'house' },
+  { key: 'houseKwh', label: 'Average household use', num: 'kWh/day', only: 'house', hint: 'Annual average; summer is higher, spring lower' },
+  { sect: 'Factory load', only: 'factory' },
+  { key: 'load', label: 'Load during operating hours', num: 'kW', only: 'factory' },
+  { key: 'shift', label: 'Operating hours', options: Object.entries(SHIFTS).map(([v, s]) => ({ v, label: s.label })), only: 'factory' },
+  { key: 'workDays', label: 'Operating days per week', fmt: v => v + ' days', hint: 'Closed days run at 15% base load', only: 'factory' },
   { sect: 'Energy prices' },
   { key: 'price', label: 'Grid electricity price', fmt: v => '$' + v.toFixed(2) + '/kWh' },
   { key: 'dieselShare', label: 'Load on diesel generator', fmt: v => v + '%', hint: 'Share of consumption supplied by generators during grid outages' },
@@ -47,11 +54,20 @@ const CONTROLS = [
 ];
 
 let S = { ...DEFAULTS };
+let CLIM = DEFAULT_CLIMATE;
+
+const LOCATION_HTML = `<div class="fld">
+  <div class="fl"><label for="in-city">Location</label><span class="fv" id="v-latlon"></span></div>
+  <select id="in-city">${CITIES.map((c, i) => `<option value="${i}">${c.name}</option>`).join('')}<option value="custom">Custom (picked on map)</option></select>
+  <button class="btn btn-block" type="button" id="btn-to-map">📍 Pick on map / draw roof</button>
+</div>`;
 
 function buildControls() {
   const root = $('controls-body');
   root.innerHTML = CONTROLS.map(c => {
-    if (c.sect) return `<div class="sect">${c.sect}</div>`;
+    const only = c.only ? ` data-only="${c.only}"` : '';
+    if (c.custom === 'location') return LOCATION_HTML;
+    if (c.sect) return `<div class="sect"${only}>${c.sect}</div>`;
     const id = 'in-' + c.key;
     if (c.check) return `<div class="fld"><label class="chk"><input type="checkbox" id="${id}" data-key="${c.key}"> ${c.label}</label></div>`;
     const [lo, hi] = LIMITS[c.key] || [];
@@ -62,10 +78,23 @@ function buildControls() {
     const input = c.options
       ? `<select id="${id}" data-key="${c.key}">${c.options.map(o => `<option value="${o.v}">${o.label}</option>`).join('')}</select>`
       : `<input type="range" id="${id}" data-key="${c.key}" min="${LIMITS[c.key][0]}" max="${LIMITS[c.key][1]}" step="${LIMITS[c.key][2]}"${c.hint ? ` title="${c.hint}"` : ''}>`;
-    return `<div class="fld">${head}${input}</div>`;
+    return `<div class="fld"${only}>${head}${input}${c.hint ? `<div class="hint">${c.hint}</div>` : ''}</div>`;
   }).join('');
   root.addEventListener('input', onInput);
   root.addEventListener('change', onInput);
+  $('in-city').addEventListener('change', e => {
+    if (e.target.value === 'custom') return goToMap();
+    const c = CITIES[+e.target.value];
+    setLocation(c.lat, c.lon, 'preset');
+    mapPanel.setView(c.lat, c.lon, 14);
+  });
+  $('btn-to-map').addEventListener('click', goToMap);
+}
+
+function goToMap() {
+  setSheet(false);
+  switchTab('location');
+  $('tab-location').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function onInput(e) {
@@ -83,9 +112,15 @@ function onInput(e) {
       v = clamp(v, lo, hi);
     }
   }
+  if (S[k] === v && e.type === 'change' && el.type !== 'number') return;
   S[k] = v;
+  if (k === 'building') {
+    Object.assign(S, PRESETS[v]);
+    toast(v === 'house' ? 'House defaults: 150 m² roof, 30 kWh/day, 10 kWh battery' : 'Factory defaults: 5,000 m² roof, 800 kW load');
+  }
   // Don't rewrite the number box the user is typing in; do clamp it once they leave it
   syncControls(el.type === 'number' && e.type === 'input' ? el : null);
+  if (k === 'pitch') mapPanel.refresh(); // sloped roof area depends on tilt
   scheduleRender();
 }
 
@@ -96,13 +131,72 @@ function syncControls(skip = null) {
     if (c.check) el.checked = !!S[c.key];
     else if (el !== skip) el.value = S[c.key];
     const num = c.num && $('num-' + c.key);
-    if (num && num !== skip) num.value = S[c.key];
+    if (num && num !== skip) num.value = +(+S[c.key]).toFixed(1);
   }
+  // Show only the inputs relevant to the building type
+  document.querySelectorAll('#controls-body [data-only]').forEach(el => { el.hidden = el.dataset.only !== S.building; });
+  const ci = CITIES.findIndex(c => haversine({ lat: S.lat, lon: S.lon }, c) < 1);
+  $('in-city').value = ci >= 0 ? String(ci) : 'custom';
   syncLabels();
 }
 function syncLabels() {
   for (const c of CONTROLS) if (c.fmt) $('v-' + c.key).textContent = c.fmt(S[c.key]);
+  $('v-latlon').textContent = `${S.lat.toFixed(3)}°, ${S.lon.toFixed(3)}°`;
 }
+
+// ══ LOCATION & CLIMATE ══════════════════════════════════════════════════════
+// Built-in city within 3 km → its NASA POWER data. Otherwise fetch NASA POWER live for the
+// exact point (cached per browser); until it arrives — or if offline — use the nearest city.
+const climCacheKey = (lat, lon) => `clim:${lat.toFixed(2)},${lon.toFixed(2)}`;
+let climRequest = 0;
+
+async function resolveClimate(lat, lon) {
+  const near = nearestCity(lat, lon, CITIES);
+  if (near.km < 3) { CLIM = { ...near.city, source: 'NASA POWER (built-in)' }; return; }
+  if (CLIM.live && haversine({ lat, lon }, CLIM) < 5) return; // POWER grid is ~50 km; no need to refetch
+  try {
+    const cached = JSON.parse(localStorage.getItem(climCacheKey(lat, lon)) || 'null');
+    if (cached) { CLIM = cached; return; }
+  } catch { /* storage unavailable */ }
+  CLIM = { ...near.city, name: `Near ${near.city.name}`, lat, lon,
+    source: `approx. — ${near.city.name} data (${fmt(near.km, 0)} km away), fetching NASA POWER…` };
+  const req = ++climRequest;
+  $('loc-status').textContent = 'Fetching climate data…';
+  try {
+    const res = await fetch(powerUrl(lat, lon));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = parsePower(await res.json());
+    if (req !== climRequest) return;                      // a newer location was picked meanwhile
+    CLIM = { name: `${lat.toFixed(3)}°, ${lon.toFixed(3)}°`, lat, lon, ...data, source: 'NASA POWER (live)', live: true };
+    try { localStorage.setItem(climCacheKey(lat, lon), JSON.stringify(CLIM)); } catch { /* ignore */ }
+    $('loc-status').textContent = '';
+  } catch {
+    if (req !== climRequest) return;
+    CLIM = { ...CLIM, source: `approx. — using ${near.city.name} data (${fmt(near.km, 0)} km away); NASA POWER unavailable` };
+    $('loc-status').textContent = 'Using nearest-city climate';
+  }
+}
+
+async function setLocation(lat, lon, how) {
+  S.lat = +clamp(lat, ...LIMITS.lat).toFixed(5);
+  S.lon = +clamp(lon, ...LIMITS.lon).toFixed(5);
+  syncControls();
+  const pending = resolveClimate(S.lat, S.lon);
+  scheduleRender();            // immediate update with the provisional climate
+  await pending;
+  scheduleRender();
+  if (how === 'map' || how === 'search' || how === 'gps') toast(`Location set: ${CLIM.name}`);
+}
+
+function onRoof({ area, orient, type, announce }) {
+  S.area = Math.round(clamp(area, ...LIMITS.area) * 10) / 10;
+  S.orient = Math.round(orient);
+  syncControls();
+  scheduleRender();
+  if (announce) toast(`Roof applied: ${fmt(S.area, S.area < 100 ? 1 : 0)} m², panels face ${azimuthLabel(S.orient)}${type === 'flat' ? ' (racks)' : ''}`);
+}
+
+const mapPanel = createMapPanel({ getState: () => S, onPick: setLocation, onRoof, toast: (...a) => toast(...a) });
 
 // ══ CHARTS ══════════════════════════════════════════════════════════════════
 const CHARTS = {};
@@ -127,7 +221,7 @@ function initCharts() {
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
   const hrs = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0') + ':00');
   mk('c1', { type: 'bar', data: { labels: hrs, datasets: [
-    { type: 'line', label: 'Factory load', data: [], borderColor: COL.redD, borderWidth: 1.5, pointRadius: 0, stepped: 'middle', order: 0 },
+    { type: 'line', label: 'Load', data: [], borderColor: COL.redD, borderWidth: 1.5, pointRadius: 0, stepped: 'middle', order: 0 },
     { label: 'Solar kWh', data: [], backgroundColor: COL.sunA, borderRadius: 2, order: 1 }] },
     options: base('kWh', { legend: true, tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${fmt(c.parsed.y, 1)} kWh` } } }) });
   mk('c2', { type: 'bar', data: { labels: MN, datasets: [{ label: 'kWh', data: [], backgroundColor: COL.sunA, borderRadius: 2 }] },
@@ -166,6 +260,26 @@ function initCharts() {
     { label: 'Current price', data: [], borderColor: COL.sun, borderWidth: 2.5, tension: 0.3, pointRadius: 0 },
     { label: 'High price ($0.20)', data: [], borderColor: COL.greenD, tension: 0.3, pointRadius: 0 }] },
     options: base('NPV $', { legend: true, tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${money(c.parsed.y)}` } } }) });
+  const ax2 = scales('°C').y;
+  mk('cl1', { type: 'bar', data: { labels: MN, datasets: [
+    { label: 'Irradiation kWh/m²/day', data: [], backgroundColor: COL.sunA, borderRadius: 2, yAxisID: 'y' },
+    { type: 'line', label: 'Air temperature °C', data: [], borderColor: COL.redD, tension: 0.3, pointRadius: 2, yAxisID: 'y2' }] },
+    options: base('kWh/m²/day', { legend: true, scales: { y: { min: 0 } },
+      extra: {} }) });
+  CHARTS.cl1.options.scales.y2 = { ...ax2, position: 'right', grid: { drawOnChartArea: false } };
+}
+
+// Location tab + header: what place and climate data the model is using
+function renderLocation(r) {
+  const cl = r.climate;
+  const where = cl.live || cl.source.startsWith('approx') ? `${S.lat.toFixed(3)}°N, ${S.lon.toFixed(3)}°E` : cl.name;
+  text('subtitle', `${where} · ${BUILDINGS[S.building]} · climate: ${cl.source} · USD`);
+  text('clim-src', cl.source);
+  text('cl-ghi', fmt(r.annual.ghiYear));
+  text('cl-tmax', fmt(Math.max(...cl.tamb), 1));
+  text('cl-latlon', `${S.lat.toFixed(3)}, ${S.lon.toFixed(3)}`);
+  $('gmaps').href = mapPanel.googleUrl(S.lat, S.lon);
+  setData('cl1', cl.ghi, cl.tamb);
 }
 
 function setData(id, ...arrays) {
@@ -187,7 +301,7 @@ const metric = (k, v) => { document.querySelector(`[data-m="${k}"]`).textContent
 let last;
 
 function render() {
-  const r = runModel(S);
+  const r = runModel(S, CLIM);
   last = r;
   const { annual: a, economics: e, day } = r;
   history.replaceState(null, '', location.pathname + location.search + (encodeState(S) ? '#' + encodeState(S) : ''));
@@ -210,7 +324,8 @@ function render() {
   text('dlbl', `${fmtDate(S.doy)} · ${WEATHER[S.wx].label} · operating day`);
   text('ytot', `Total ${sig(mwh)} MWh/yr · ${fmt(a.specificYield)} kWh/kWp`);
   const r2 = arr => arr.map(v => +v.toFixed(2));
-  setData('c1', loadProfile(S.load, S.shift), r2(day.hourly));
+  setData('c1', r2(loadProfile(S, true, r.month)), r2(day.hourly));
+  renderLocation(r);
   setData('c2', r.monthly.map(m => +(m.genKwh / 1000).toFixed(3)));
   renderHeatmap();
   renderRoof();
@@ -232,7 +347,7 @@ function render() {
   text('batt-note', S.batt === 0
     ? `No battery selected. ${fmt(surplusPct, 0)}% of solar output is currently exported${surplusPct > 10 ? ' — try adding a battery to store it.' : ', so a battery would add little value.'}`
     : e.battExtraSaving < e.battCapex * C.OM_RATE
-      ? 'Solar output rarely exceeds the factory load at these settings, so there is little surplus to store. Increase roof area/coverage or reduce load to see battery value.'
+      ? 'Solar output rarely exceeds the building load at these settings, so there is little surplus to store. Increase roof area/coverage or reduce load to see battery value.'
       : `Battery value comes from shifting surplus solar (otherwise exported at $${S.exportTariff.toFixed(2)}) to cover load worth $${r.effPrice.toFixed(2)}/kWh. Max charge/discharge 0.5C.`);
 
   // Optimisation
@@ -300,10 +415,10 @@ function hmColor(n) {
   return lerpHex(s[i], s[i + 1], x - i);
 }
 function renderHeatmap() {
-  const key = ['pitch', 'orient', 'eff', 'area', 'cov', 'soiling', 'temp'].map(k => S[k]).join('|');
+  const key = ['pitch', 'orient', 'eff', 'area', 'cov', 'soiling', 'temp', 'lat'].map(k => S[k]).join('|') + CLIM.ghi.join();
   if (key === hmKey) return;
   hmKey = key;
-  const daily = yearDaily(S);
+  const daily = yearDaily(S, CLIM);
   const lo = Math.min(...daily), hi = Math.max(...daily);
   let html = '<span></span>' + Array.from({ length: 31 }, (_, d) => `<span style="text-align:center">${(d + 1) % 5 === 0 || d === 0 ? d + 1 : ''}</span>`).join('');
   let doy = 0;
@@ -369,8 +484,9 @@ function switchTab(name, focus = false) {
     p.classList.toggle('active', on);
     p.hidden = !on;
   });
-  // Charts in hidden panels have zero size until shown
+  // Charts (and the map) in hidden panels have zero size until shown
   Object.values(CHARTS).forEach(c => c.canvas.closest('.panel.active') && c.resize());
+  if (name === 'location' && typeof L !== 'undefined') mapPanel.show();
 }
 tabs.forEach((t, i) => {
   t.addEventListener('click', () => switchTab(t.dataset.tab));
@@ -410,8 +526,15 @@ $('btn-csv').addEventListener('click', () => {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 $('btn-print').addEventListener('click', () => window.print());
-$('btn-reset').addEventListener('click', () => { S = { ...DEFAULTS }; syncControls(); render(); toast('Inputs reset to defaults'); });
-window.addEventListener('hashchange', () => { S = decodeState(location.hash); syncControls(); render(); });
+$('btn-reset').addEventListener('click', () => {
+  S = { ...DEFAULTS }; CLIM = DEFAULT_CLIMATE;
+  syncControls(); render(); mapPanel.setView(S.lat, S.lon, 14);
+  toast('Inputs reset to defaults');
+});
+window.addEventListener('hashchange', async () => {
+  S = decodeState(location.hash); syncControls();
+  await resolveClimate(S.lat, S.lon); render(); mapPanel.setView(S.lat, S.lon);
+});
 window.addEventListener('beforeprint', () => Object.values(CHARTS).forEach(c => c.resize()));
 
 // ══ METHOD TEXT ═════════════════════════════════════════════════════════════
@@ -439,5 +562,7 @@ if (typeof Chart === 'undefined') {
   document.body.insertAdjacentHTML('afterbegin', '<p class="note warn" style="margin:8px">Charts failed to load. Please refresh.</p>');
 } else {
   initCharts();
+  const climReady = resolveClimate(S.lat, S.lon); // shared link to a custom spot → fetch its climate
   render();
+  climReady.then(() => render());
 }

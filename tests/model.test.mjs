@@ -21,7 +21,7 @@ describe('solar geometry', () => {
   });
 
   test('noon elevation matches 90 - lat + declination', () => {
-    near(M.sunPosition(172, 12).elevation, 90 - M.SITE.lat + M.declination(172), 0.01);
+    near(M.sunPosition(172, 12).elevation, 90 - M.DEFAULTS.lat + M.declination(172), 0.01);
   });
 
   test('sunrise/sunset symmetric around noon; summer days longer', () => {
@@ -32,7 +32,7 @@ describe('solar geometry', () => {
 
   test('horizontal panel sees GHI: annual model reproduces input irradiation', () => {
     const ghi = M.MDAYS.reduce((a, d, m) => a + M.dayGeneration(M.midDoy(m), M.monthlyKt(m), { ...M.DEFAULTS, pitch: 0 }).ghi * d, 0);
-    const input = M.MDAYS.reduce((a, d, m) => a + M.GHI[m] * d, 0);
+    const input = M.MDAYS.reduce((a, d, m) => a + M.DEFAULT_CLIMATE.ghi[m] * d, 0);
     near(ghi, input, input * 0.005);
   });
 
@@ -58,18 +58,18 @@ describe('PV yield (regression guards against orientation/tilt bugs)', () => {
     assert.ok(e >= w && e / w < 1.03, `east/west = ${e / w}`);
   });
 
-  test('optimal annual tilt for Baghdad is between 25° and 35°', () => {
+  test('optimal annual tilt for Baghdad is between 20° and 32°', () => {
     const best = base.sweeps.tilt.reduce((a, b) => (b.mwh > a.mwh ? b : a));
-    assert.ok(best.tilt >= 25 && best.tilt <= 35, `best tilt ${best.tilt}`);
+    assert.ok(best.tilt >= 20 && best.tilt <= 32, `best tilt ${best.tilt}`);
   });
 
   test('tilted south panel out-produces flat panel', () => {
     assert.ok(annual({ pitch: 30 }) > annual({ pitch: 0 }));
   });
 
-  test('specific yield is realistic for central Iraq (1,500–1,950 kWh/kWp)', () => {
+  test('specific yield is realistic for central Iraq (1,400–1,900 kWh/kWp)', () => {
     const y = base.annual.specificYield;
-    assert.ok(y > 1500 && y < 1950, `specific yield ${y}`);
+    assert.ok(y > 1400 && y < 1900, `specific yield ${y}`);
   });
 
   test('summer months out-produce winter months', () => {
@@ -111,7 +111,7 @@ describe('PV yield (regression guards against orientation/tilt bugs)', () => {
 
 describe('battery dispatch', () => {
   const gen = Array.from({ length: 24 }, (_, h) => (h >= 7 && h <= 17 ? 1000 * Math.sin(Math.PI * (h - 6) / 12) : 0));
-  const load = M.loadProfile(400);
+  const load = M.loadProfile({ ...M.DEFAULTS, load: 400 });
 
   for (const cap of [0, 500, 2000]) {
     test(`energy balance holds (capacity ${cap} kWh)`, () => {
@@ -287,8 +287,8 @@ describe('model robustness', () => {
   });
 
   test('every orientation, weather and shift option runs', () => {
-    for (const o of M.ORIENTATIONS) for (const wx of Object.keys(M.WEATHER)) {
-      assert.ok(Number.isFinite(M.runModel({ ...M.DEFAULTS, orient: o.v, wx }).day.total));
+    for (const orient of [-180, -90, -45, 0, 45, 90, 135, 180]) for (const wx of Object.keys(M.WEATHER)) {
+      assert.ok(Number.isFinite(M.runModel({ ...M.DEFAULTS, orient, wx }).day.total));
     }
     for (const shift of Object.keys(M.SHIFTS)) assert.ok(Number.isFinite(M.runModel({ ...M.DEFAULTS, shift }).economics.saving));
   });
@@ -317,11 +317,11 @@ describe('state sharing', () => {
   });
 
   test('decode clamps out-of-range and ignores junk', () => {
-    const s = M.decodeState('#pitch=999&area=-5&wx=hacked&orient=17&foo=bar&eff=abc');
+    const s = M.decodeState('#pitch=999&area=-5&wx=hacked&orient=999&foo=bar&eff=abc');
     assert.equal(s.pitch, 45);
     assert.equal(s.area, 10);
     assert.equal(s.wx, M.DEFAULTS.wx);
-    assert.equal(s.orient, M.DEFAULTS.orient);
+    assert.equal(s.orient, 180);
     assert.equal(s.eff, M.DEFAULTS.eff);
     assert.ok(!('foo' in s));
   });

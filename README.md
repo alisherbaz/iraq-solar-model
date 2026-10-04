@@ -6,7 +6,15 @@ Manual Netlify deploy (runs the unit tests first): `npx netlify-cli deploy --bui
 
 An interactive, mobile-friendly model of rooftop solar PV, battery storage and project financing for a factory in Baghdad, Iraq. It's a static site with no build step and no backend.
 
-**Tabs:** Generation · Battery · Optimisation (coverage, tilt, orientation, heat) · Financing (grants, LCOE, NPV) · Method
+**Tabs:** Location & roof · Generation · Battery · Optimisation (coverage, tilt, orientation, heat) · Financing (grants, LCOE, NPV) · Method
+
+**Houses and factories, anywhere in Iraq:**
+- Pick one of 20 built-in Iraqi cities, search for an address, use GPS, or tap the satellite map.
+- Climate (monthly irradiation and temperature) comes from **NASA POWER**. It's fetched live for any map point and cached in the browser. Built-in city data is the offline fallback (`npm run climate` refreshes it).
+- **Draw the roof** on the satellite image. The app measures the area and works out which way the roof faces: flat roofs get south-facing racks, and pitched roofs face perpendicular to the ridge, with a switch to use the other side.
+- A **house mode** adds an Iraqi household load profile (evening peak, summer air-conditioning) and generator-subscription pricing.
+
+External services: NASA POWER (climate), OpenStreetMap Nominatim (search) and Esri World Imagery (satellite tiles). None need an API key. Google Maps would need a billing-enabled API key, so the app links to Google Maps for the chosen spot instead.
 
 ## Run locally
 

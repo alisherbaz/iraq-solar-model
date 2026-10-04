@@ -120,6 +120,31 @@ select{width:100%;font-size:11px;background:var(--bg3);color:var(--text);border:
 
 #rsvg{display:block;width:100%;height:auto}
 
+/* ── Location tab ── */
+.hint{font-size:10px;color:var(--text3);margin-top:1px;line-height:1.3}
+.btn-block{width:100%;margin-top:6px;padding:7px 10px}
+.loc-search{display:flex;gap:6px;margin-bottom:8px}
+.loc-search input{flex:1;min-width:0;font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border2);border-radius:var(--radius-xs);background:var(--bg);color:var(--text)}
+.loc-results{list-style:none;margin:0 0 8px;border:1px solid var(--border2);border-radius:var(--radius-xs);background:var(--bg);max-height:200px;overflow:auto}
+.loc-results li{border-bottom:1px solid var(--border)}
+.loc-results li:last-child{border-bottom:none}
+.loc-results button{display:block;width:100%;text-align:left;background:none;border:none;padding:8px 10px;font-size:12px;cursor:pointer;color:var(--text)}
+.loc-results button:hover{background:var(--bg3)}
+.loc-results .muted{padding:8px 10px;font-size:12px;color:var(--text3)}
+.map{height:420px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:#2b2b2b;z-index:0}
+.map.drawing{cursor:crosshair}
+.map.drawing .leaflet-grab{cursor:crosshair}
+.map-tools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.map-tools .btn:disabled{opacity:.45;cursor:default}
+.btn.on{background:var(--sun3);border-color:var(--sun);color:var(--sun)}
+.vtx{background:#f5c842;border:2px solid #1c1a14;border-radius:50%;box-shadow:0 0 0 2px rgba(255,255,255,.6)}
+.vtx.first{background:#e85020;width:20px !important;height:20px !important;margin:-10px 0 0 -10px !important}
+.roof-type{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.stat-grid .wide{grid-column:span 2}
+.flip-row{margin-top:8px}
+.leaflet-container{font:inherit}
+.leaflet-control-attribution{font-size:9px}
+
 .panel{display:none}
 .panel.active{display:block}
 
@@ -166,6 +191,14 @@ select{width:100%;font-size:11px;background:var(--bg3);color:var(--text);border:
   .num{font-size:16px;width:100px;padding:4px 6px}
   .chk{font-size:13px;padding:4px 0}
   .chk input{width:20px;height:20px;margin-top:0}
+  .map{height:58vh;min-height:300px}
+  .map-tools .btn{flex:1;min-height:40px;font-size:13px}
+  .loc-search input{font-size:16px;padding:8px 10px}
+  .loc-search .btn{min-height:40px}
+  .loc-results button{padding:11px 10px;font-size:14px}
+  .hint{font-size:11.5px}
+  .vtx{width:22px !important;height:22px !important;margin:-11px 0 0 -11px !important}
+  .vtx.first{width:26px !important;height:26px !important;margin:-13px 0 0 -13px !important}
   input[type=range]{height:32px}
   .fld{margin-bottom:12px}
 }

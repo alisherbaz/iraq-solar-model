@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="description" content="Interactive solar PV, battery and financing model for a factory rooftop in Baghdad, Iraq.">
+<meta name="description" content="Interactive solar PV, battery and financing model for houses and factories in Iraq — pick your location, draw your roof, see output, savings and payback.">
 <meta name="theme-color" content="#d48a00">
-<title>Iraq Solar Factory Model</title>
+<title>Iraq Solar Model</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/chart.umd.min.js" defer></script>
+<script src="vendor/leaflet.js" defer></script>
 <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -16,8 +18,8 @@
 
   <header class="topbar">
     <div>
-      <h1>☀️ Iraq Advanced Solar Model
-        <small>Baghdad, Iraq · Lat 33.3°N · long-term irradiation data · all values in USD</small>
+      <h1>☀️ Iraq Solar Model
+        <small id="subtitle">Baghdad · Lat 33.3°N · NASA POWER climate data · all values in USD</small>
       </h1>
     </div>
     <div class="actions">
@@ -30,6 +32,7 @@
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Model sections">
+    <button class="tab" role="tab" aria-selected="false" aria-controls="tab-location" data-tab="location" tabindex="-1">📍 Location &amp; roof</button>
     <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-generation" data-tab="generation">⚡ Generation</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="tab-battery" data-tab="battery" tabindex="-1">🔋 Battery</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="tab-optimisation" data-tab="optimisation" tabindex="-1">📊 Optimisation</button>
@@ -68,10 +71,59 @@
         <div class="mc rd"><div class="ml">Payback (net grants)</div><div class="mv"><span data-m="payback">—</span><span class="mu"> yrs</span></div></div>
       </div>
 
+      <!-- ── TAB: LOCATION & ROOF ── -->
+      <section id="tab-location" class="panel" role="tabpanel" hidden>
+        <div class="card">
+          <div class="card-title">Find your building <span id="loc-status"></span></div>
+          <form id="loc-search" class="loc-search" role="search">
+            <input type="search" id="loc-q" placeholder="Search a city, district or address…" aria-label="Search for a place" autocomplete="off">
+            <button class="btn" type="submit">Search</button>
+            <button class="btn" type="button" id="btn-geoloc" title="Use my current location">📍 Me</button>
+          </form>
+          <ul id="loc-results" class="loc-results" hidden></ul>
+          <div id="map" class="map" aria-label="Satellite map — tap to set the location or draw the roof"></div>
+          <div class="map-tools">
+            <button class="btn" type="button" id="btn-draw">✏️ Draw roof</button>
+            <button class="btn" type="button" id="btn-undo" disabled>↶ Undo</button>
+            <button class="btn" type="button" id="btn-finish" disabled>✓ Finish</button>
+            <button class="btn" type="button" id="btn-clear" disabled>✕ Clear</button>
+          </div>
+          <p class="note" id="map-hint">Tap the map to set the location, or press Draw roof and tap each corner of the roof.</p>
+        </div>
+
+        <div class="card" id="roof-result" hidden>
+          <div class="card-title">Roof measurement <span>applied to the model</span></div>
+          <div class="roof-type" role="radiogroup" aria-label="Roof type">
+            <label class="chk"><input type="radio" name="rooftype" value="flat" checked> Flat roof (most Iraqi houses)</label>
+            <label class="chk"><input type="radio" name="rooftype" value="pitched"> Pitched / sloped roof face</label>
+          </div>
+          <div class="stat-grid">
+            <div class="batt-stat"><div class="v c-sun"><span id="rr-area">—</span> m²</div><div class="l">Roof area used</div></div>
+            <div class="batt-stat"><div class="v"><span id="rr-plan">—</span> m²</div><div class="l">Plan area (as drawn)</div></div>
+            <div class="batt-stat"><div class="v c-blue" id="rr-facing">—</div><div class="l">Panels face</div></div>
+            <div class="batt-stat"><div class="v"><span id="rr-perim">—</span> m</div><div class="l">Perimeter</div></div>
+            <div class="batt-stat wide"><div class="v" id="rr-edge">—</div><div class="l">Longest edge (ridge / eave line)</div></div>
+          </div>
+          <div id="flip-row" class="flip-row" hidden><button class="btn" type="button" id="btn-flip">⇄ Other side of the ridge</button></div>
+          <p class="note" id="rr-note"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Climate at this location <span id="clim-src"></span></div>
+          <div class="stat-grid">
+            <div class="batt-stat"><div class="v c-sun" id="cl-ghi">—</div><div class="l">Irradiation kWh/m²/yr</div></div>
+            <div class="batt-stat"><div class="v c-red" id="cl-tmax">—</div><div class="l">Hottest month °C</div></div>
+            <div class="batt-stat"><div class="v" id="cl-latlon">—</div><div class="l">Lat, lon</div></div>
+          </div>
+          <div class="ch ch-h160" style="margin-top:10px"><canvas id="cl1" aria-label="Monthly irradiation and temperature" role="img"></canvas></div>
+          <p class="note">Long-term monthly averages from <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (about 50 km resolution). <a id="gmaps" href="#" target="_blank" rel="noopener">Open this spot in Google Maps ↗</a></p>
+        </div>
+      </section>
+
       <!-- ── TAB: GENERATION ── -->
       <section id="tab-generation" class="panel active" role="tabpanel">
         <div class="card">
-          <div class="card-title">Hourly generation vs factory load <span id="dlbl">—</span></div>
+          <div class="card-title">Hourly generation vs load <span id="dlbl">—</span></div>
           <div class="ch ch-h200"><canvas id="c1" aria-label="Hourly generation chart" role="img"></canvas></div>
         </div>
         <div class="card">
@@ -103,7 +155,7 @@
         <div class="card">
           <div class="card-title">Monthly self-consumption vs solar fraction</div>
           <div class="ch ch-h160"><canvas id="cb2"></canvas></div>
-          <p class="note">Self-consumption = share of solar used on site. Solar fraction = share of factory load met by solar (direct + battery).</p>
+          <p class="note">Self-consumption = share of solar used on site. Solar fraction = share of the building's load met by solar (direct + battery).</p>
         </div>
         <div class="card">
           <div class="card-title">Battery state of charge — selected day</div>
@@ -139,7 +191,7 @@
         <div class="card">
           <div class="card-title">Tilt optimisation — annual output vs tilt <span id="tiltbest"></span></div>
           <div class="ch ch-h160"><canvas id="co4"></canvas></div>
-          <p class="note">South-facing, current settings. The highlighted point is your current pitch. For Baghdad (33°N) the annual optimum is around 28–33°.</p>
+          <p class="note">South-facing, current settings. The highlighted point is your current tilt. Across Iraq (30–37°N) the annual optimum is roughly 22–30°. Northern cities have a cloudier winter, which favours a slightly lower tilt than latitude alone suggests.</p>
         </div>
         <div class="card">
           <div class="card-title">Orientation sensitivity — % of best direction (at current tilt)</div>
@@ -228,11 +280,15 @@
         <div class="card prose">
           <div class="card-title">Methodology &amp; assumptions</div>
           <h3>Irradiation</h3>
-          <p>Long-term monthly mean global horizontal irradiation for Baghdad (about 2,100 kWh/m²/yr) is converted to a clearness index for each month. A representative day per month is simulated in 15-minute steps. The Erbs correlation splits each step into beam and diffuse, and an isotropic-sky (Liu–Jordan) model projects it onto the tilted roof. The <em>weather</em> input affects only the selected-day view. Annual figures always use long-term averages.</p>
+          <p>Long-term monthly mean global horizontal irradiation and air temperature for the chosen location come from NASA POWER (fetched live for map locations; 20 Iraqi cities are built in, and the nearest city is used as a fallback offline). Sun position uses the exact latitude. Irradiation is converted to a clearness index for each month. A representative day per month is simulated in 15-minute steps. The Erbs correlation splits each step into beam and diffuse, and an isotropic-sky (Liu–Jordan) model projects it onto the tilted roof. The <em>weather</em> input affects only the selected-day view. Annual figures always use long-term averages.</p>
           <h3>Losses</h3>
           <ul id="method-losses"></ul>
           <h3>Battery &amp; load</h3>
-          <p>The factory draws the set load during its operating hours (day shift, two shifts or 24 h) and 15% of it at other times. On closed days (e.g. Fridays) it draws only that 15% base load all day, so more solar is exported. Solar serves the load first, then charges the battery (max 0.5C), and the remainder is exported. The battery discharges into the load whenever solar falls short. Round-trip losses are split equally between charging and discharging. Each day is simulated twice so the state of charge reaches a steady state.</p>
+          <p><strong>Factory:</strong> the set load runs during operating hours (day shift, two shifts or 24 h), with 15% of it at other times. On closed days (e.g. Fridays) only that 15% base load runs all day, so more solar is exported.</p>
+          <p><strong>House:</strong> daily consumption follows an illustrative Iraqi household pattern: lower at night, rising through the afternoon for cooling, and peaking in the evening. Summer use is about 45% above the annual average and spring about 20% below, reflecting air-conditioning. Both shapes are assumptions; replace them with metered data where available.</p>
+          <h3>Roof drawing</h3>
+          <p>Roof area is calculated from the outline you draw on the satellite map, projected to metres around the roof's centre (accurate to well under 1% for building-sized shapes). A drawn outline is the horizontal (plan) area. For a pitched roof face, the sloped area = plan area ÷ cos(tilt), and the panels face perpendicular to the longest edge (the ridge or eave line). The sun-facing side is suggested, and you can switch to the other side. On flat roofs, panels are assumed to sit on racks facing the equator.</p>
+          <p>Solar serves the load first, then charges the battery (max 0.5C), and the remainder is exported. The battery discharges into the load whenever solar falls short. Round-trip losses are split equally between charging and discharging. Each day is simulated twice so the state of charge reaches a steady state.</p>
           <h3>Economics</h3>
           <ul id="method-eco"></ul>
           <p class="note">This is a screening-level model for early feasibility. Before investing, validate with a site-specific PVGIS / PVsyst study and confirmed quotes.</p>

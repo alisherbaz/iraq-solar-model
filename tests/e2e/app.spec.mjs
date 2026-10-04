@@ -1,39 +1,7 @@
 // End-to-end tests — run on desktop and mobile viewports (see playwright.config.mjs).
 // Tests tagged @smoke are safe to run against the live Netlify site after each deploy.
 import { test, expect } from '@playwright/test';
-
-const isMobile = testInfo => testInfo.project.name !== 'desktop';
-
-async function load(page, hash = '') {
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  page.on('console', m => m.type() === 'error' && errors.push(m.text()));
-  await page.goto('./' + hash); // relative, so it works when the site is served from a sub-path (GitHub Pages)
-  await expect(page.locator('body[data-ready="1"]')).toBeAttached();
-  // Netlify injects its own HUD script (/.netlify/scripts/hud) whose inline code our CSP deliberately blocks.
-  // Ignore only that CSP report, and only when Netlify's script is present — any other error still fails.
-  const netlifyHud = await page.locator('script[src*="/.netlify/scripts/"]').count();
-  if (netlifyHud) return errors.filter(e => !/^Executing inline script violates the following Content Security Policy/.test(e));
-  return errors;
-}
-
-async function openInputs(page, testInfo) {
-  if (isMobile(testInfo)) {
-    await page.locator('#btn-open-controls').click();
-    await expect(page.locator('#controls')).toHaveClass(/open/);
-  }
-}
-
-async function setInput(page, key, value) {
-  await page.locator('#in-' + key).evaluate((el, v) => {
-    el.value = v;
-    el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
-  }, String(value));
-  await page.waitForFunction(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))));
-}
-
-const metric = (page, k) => page.locator(`[data-m="${k}"]`);
-const num = async loc => Number((await loc.textContent()).replace(/[^0-9.\-]/g, ''));
+import { isMobile, load, openInputs, setInput, metric, num } from './helpers.mjs';
 
 test('@smoke loads without errors and fills every metric', async ({ page }) => {
   const errors = await load(page);
@@ -46,7 +14,7 @@ test('@smoke loads without errors and fills every metric', async ({ page }) => {
 
 test('@smoke every tab shows its panel with rendered charts', async ({ page }) => {
   await load(page);
-  for (const name of ['generation', 'battery', 'optimisation', 'grants', 'method']) {
+  for (const name of ['location', 'generation', 'battery', 'optimisation', 'grants', 'method']) {
     await page.locator(`.tab[data-tab="${name}"]`).click();
     const panel = page.locator('#tab-' + name);
     await expect(panel).toBeVisible();
@@ -174,7 +142,7 @@ test('CSV export downloads monthly results', async ({ page }) => {
 
 test('@smoke no horizontal page overflow on any tab', async ({ page }) => {
   await load(page);
-  for (const name of ['generation', 'battery', 'optimisation', 'grants', 'method']) {
+  for (const name of ['location', 'generation', 'battery', 'optimisation', 'grants', 'method']) {
     await page.locator(`.tab[data-tab="${name}"]`).click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `horizontal overflow on ${name}`).toBeLessThanOrEqual(0);
