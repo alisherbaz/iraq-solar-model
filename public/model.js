@@ -396,8 +396,12 @@ export function yearDaily(input, clim = DEFAULT_CLIMATE) {
 // ── state (URL sharing) ────────────────────────────────────────────────────
 const INT_KEYS = new Set(['doy', 'workDays', 'dutyOn', 'euOn']);
 
+// Unspecified inputs fall back to the building type's defaults (so a link with just
+// building=house gets house-sized values), and links only store differences from them.
+const baseFor = building => (building === 'house' ? { ...DEFAULTS, ...PRESETS.house, building } : DEFAULTS);
+
 export function sanitizeState(input = {}) {
-  const s = { ...DEFAULTS };
+  const s = { ...baseFor(input.building) };
   for (const [k, v] of Object.entries(input)) {
     if (!(k in DEFAULTS)) continue;
     if (k in ENUMS) { if (ENUMS[k].includes(v)) s[k] = v; continue; }
@@ -410,8 +414,9 @@ export function sanitizeState(input = {}) {
 }
 
 export function encodeState(s) {
-  const p = new URLSearchParams();
-  for (const k of Object.keys(DEFAULTS)) if (s[k] !== DEFAULTS[k]) p.set(k, s[k]);
+  const p = new URLSearchParams(), base = baseFor(s.building);
+  if (s.building !== DEFAULTS.building) p.set('building', s.building);
+  for (const k of Object.keys(DEFAULTS)) if (k !== 'building' && s[k] !== base[k]) p.set(k, s[k]);
   return p.toString();
 }
 

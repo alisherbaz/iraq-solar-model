@@ -129,6 +129,16 @@ describe('locations & climate', () => {
     assert.throws(() => G.parsePower({}));
   });
 
+  test('a link with only building=house gets house defaults; round-trips are exact', () => {
+    const s = M.decodeState('#building=house');
+    assert.equal(s.area, M.PRESETS.house.area);
+    assert.equal(s.houseKwh, M.PRESETS.house.houseKwh);
+    // a house value that equals the *factory* default must survive the round trip
+    const h = { ...s, cov: M.DEFAULTS.cov, pitch: 33 };
+    assert.deepEqual(M.decodeState('#' + M.encodeState(h)), h);
+    assert.equal(M.encodeState(s), 'building=house');
+  });
+
   test('URL state carries location and is clamped', () => {
     const s = M.decodeState('#lat=36.19&lon=44.01&building=house');
     assert.equal(s.lat, 36.19); assert.equal(s.lon, 44.01); assert.equal(s.building, 'house');
