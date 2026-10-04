@@ -10,6 +10,10 @@ async function load(page, hash = '') {
   page.on('console', m => m.type() === 'error' && errors.push(m.text()));
   await page.goto('./' + hash); // relative, so it works when the site is served from a sub-path (GitHub Pages)
   await expect(page.locator('body[data-ready="1"]')).toBeAttached();
+  // Netlify injects its own HUD script (/.netlify/scripts/hud) whose inline code our CSP deliberately blocks.
+  // Ignore only that CSP report, and only when Netlify's script is present — any other error still fails.
+  const netlifyHud = await page.locator('script[src*="/.netlify/scripts/"]').count();
+  if (netlifyHud) return errors.filter(e => !/^Executing inline script violates the following Content Security Policy/.test(e));
   return errors;
 }
 

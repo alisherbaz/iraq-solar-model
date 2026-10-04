@@ -1,6 +1,8 @@
 # ☀️ Iraq Solar Factory Model
 
-**Live:** https://alisherbaz.github.io/iraq-solar-model/
+**Live:** https://iraq-solar-model.netlify.app (Netlify) · https://alisherbaz.github.io/iraq-solar-model/ (GitHub Pages)
+
+Manual Netlify deploy (runs the unit tests first): `npx netlify-cli deploy --build --prod`
 
 An interactive, mobile-friendly model of rooftop solar PV, battery storage and project financing for a factory in Baghdad, Iraq. It's a static site with no build step and no backend.
 
